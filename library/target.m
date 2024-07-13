@@ -5,7 +5,7 @@ classdef target < handle
     properties (SetAccess = private, GetAccess = public)
         position (3, :) double = zeros(3, 1) % meters
         velocity (3, :) double = zeros(3, 1) % meters per second
-        meanRCS (1, :) double {mustBeNonnegative} = 1 % meter squares
+        meanRCS_dbms (1, :) double = 0 % dB of meter squares
         swerling (1, 1) double {mustBeInteger, mustBeMember(swerling, 0 : 4)} = 0
     end
 
@@ -13,7 +13,7 @@ classdef target < handle
         numberOfTargets (1, 1) double {mustBeInteger, mustBeNonnegative}
         velocityMagnitude (1, :) double {mustBeNonnegative} % meters per second
         velocityUnitDirection (3, :) double
-        RCS (1, :) double {mustBePositive} % meter squares
+        RCS_dbms (1, :) double {mustBePositive} % meter squares
     end
 
     properties (Access = private)
@@ -34,7 +34,7 @@ classdef target < handle
             arguments
                 options.position (3, :) double = zeros(3, 1)
                 options.velocity (3, :) double = zeros(3, 1)
-                options.meanRCS (1, :) double {mustBeNonnegative} = 1
+                options.meanRCS_dbms (1, :) double = 0
                 options.x (1, :) double = nan
                 options.y (1, :) double = nan
                 options.z (1, :) double = nan
@@ -64,7 +64,7 @@ classdef target < handle
             elseif ~isscalar(options.z)
                 options.position = [zeros(1, numel(options.z)); zeros(1, numel(options.z)); options.z(:).';];
             end
-            numberOfTargets = max([size(options.position, 2), size(options.velocity, 2), size(options.meanRCS, 2)]);
+            numberOfTargets = max([size(options.position, 2), size(options.velocity, 2), size(options.meanRCS_dbms, 2)]);
             if size(options.position, 2) == 1
                 options.position = repmat(options.position, 1, numberOfTargets);
             elseif size(options.position, 2) ~= numberOfTargets
@@ -75,14 +75,14 @@ classdef target < handle
             elseif size(options.velocity, 2) ~= numberOfTargets
                 error('number of targets is %d', numberOfTargets);
             end
-            if size(options.meanRCS, 2) == 1
-                options.meanRCS = repmat(options.meanRCS, 1, numberOfTargets);
-            elseif size(options.meanRCS, 2) ~= numberOfTargets
+            if size(options.meanRCS_dbms, 2) == 1
+                options.meanRCS_dbms = repmat(options.meanRCS_dbms, 1, numberOfTargets);
+            elseif size(options.meanRCS_dbms, 2) ~= numberOfTargets
                 error('number of targets is %d', numberOfTargets);
             end
             obj.position = options.position;
             obj.velocity = options.velocity;
-            obj.meanRCS = options.meanRCS;
+            obj.meanRCS_dbms = options.meanRCS_dbms;
         end
 
         function N = get.numberOfTargets(obj)
@@ -99,10 +99,10 @@ classdef target < handle
             u(:, nonzeroVelocities) = obj.velocity(:, nonzeroVelocities)./obj.velocityMagnitude(1, nonzeroVelocities);
         end
 
-        function rcs = get.RCS(obj)
+        function rcs = get.RCS_dbms(obj)
             switch obj.swerling
                 case 0
-                    rcs = obj.meanRCS;
+                    rcs = obj.meanRCS_dbms;
                 case 1
                     %%%%% not implemented %%%%%
                 case 2

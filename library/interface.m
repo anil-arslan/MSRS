@@ -96,7 +96,7 @@ classdef interface < handle
         function Pr = get.receivedPowerFromScatterers(obj)
             % (Ntx x Nrx x Nt matrix)
             rng(obj.monteCarlo.seed);
-            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower].'.*permute(obj.targets.RCS, [1 3 2])) ...
+            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower].') + permute(obj.targets.RCS_dbms, [1 3 2]) ...
             + 20*log10([obj.network.activeTransmittingNodes.carrierWavelength].');
             powerLosses = [obj.network.activeReceivingNodes.systemLoss] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
             Pr = powerGains - powerLosses;
