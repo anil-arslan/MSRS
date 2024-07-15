@@ -1,5 +1,7 @@
 %%% Anıl ARSLAN 2303980
 clc; %clear; close all;
+addpath(genpath([pwd '/library']));
+
 d = 1e3;
 scanD = linspace(-1.5*d, 1.5*d, 100);
 receivers = receivingNode( ...

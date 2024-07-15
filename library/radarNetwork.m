@@ -33,8 +33,8 @@ classdef radarNetwork < handle
         pulseWidthSample double % (Nrx x Ntx matrix)
         dutyCycles double % (Nrx x Nrx matrix)
         matchFilter double % (L x Nrx x Ntx matrix)
-        processingGain double % (Nrx x Nrx matrix)
-        noisePSDmatrix double % (Nrx x Nrx matrix)
+        processingGain_dB double % (Nrx x Nrx matrix)
+        noisePSDmatrix double % W/Hz (Nrx x Nrx matrix)
     end
 
     properties (Constant)
@@ -180,12 +180,12 @@ classdef radarNetwork < handle
             end
         end
 
-        function G = get.processingGain(obj)
+        function G = get.processingGain_dB(obj)
             G = permute(20*log10(sum(abs(obj.matchFilter))), [2 3 1]);
         end
 
         function B = get.noisePSDmatrix(obj)
-            B = diag(10.^(.1*[obj.activeReceivingNodes.noisePowerPerSample])./[obj.activeReceivingNodes.samplingFrequency]);
+            B = diag(10.^(.1*[obj.activeReceivingNodes.noisePowerPerSample_dB])./[obj.activeReceivingNodes.samplingFrequency]);
         end
 
         %%% set methods
@@ -220,12 +220,12 @@ classdef radarNetwork < handle
             mfAll = obj.matchFilter;
             figure; hold on;
             if strcmpi(options.axisAmbiguity, "3D")
-                txIDs = obj.numberOfTransmittingNodes;
+                txIDs = obj.numberOfActiveTransmittingNodes;
             else
-                txIDs = 1 : obj.numberOfTransmittingNodes;
+                txIDs = 1 : obj.numberOfActiveTransmittingNodes;
             end
             for txID = txIDs
-                for rxID = 1 : obj.numberOfReceivingNodes
+                for rxID = 1 : obj.numberOfActiveReceivingNodes
                     if strcmpi(options.axisAmbiguity, "3D") && rxID ~= 1
                         break;
                     end
@@ -301,7 +301,7 @@ classdef radarNetwork < handle
                     case "imaginary"
                         ylabel('imaginary part');
                 end
-                [idTx, idRx] = meshgrid([obj.transmittingNodes.id], [obj.receivingNodes.id]);
+                [idTx, idRx] = meshgrid(1 : obj.numberOfActiveTransmittingNodes, 1 : obj.numberOfActiveReceivingNodes);
                 leg = legend(num2str([idTx(:) idRx(:)]), 'Location', 'best');
                 title(leg, 'TX | RX ID');
             else

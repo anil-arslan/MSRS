@@ -7,6 +7,12 @@ classdef spu < handle
         gridResolution (3, 1) double {mustBeNonnegative} = 100*ones(3, 1)
         configuration (1, 1) struct = struct('numberOfTargets', 1, 'PFA', 1e-6)
         processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(processingAlgorithm, 1, 10)} = 1
+        % 1: coherent detector (deterministic signal)
+        % 2: coherent detector (stochastic signal, dependent phase, dependent amplitude)
+        % 3: square-law envelope detector (non-fluctuating weak stochastic signal, independent phase, dependent amplitude)
+        % 4: linear-law envelope detector (non-fluctuating strong stochastic signal, independent phase, dependent amplitude)
+        % 5:
+        % 6:
     end
 
     properties (Dependent)
@@ -22,9 +28,13 @@ classdef spu < handle
     end
 
     properties (Dependent)
-        outputSNR double % dB power
+        inputSNR_dB double % dB power
+        outputSNR_dB double % dB power
+        outputSNR_lin double % linear scale power
+        threshold function_handle
+        ROC function_handle
         expectedAmplitudes double {mustBePositive} % linear scale magnitude normalized to first receiver (reference)
-        noisePowersPerSample double {mustBePositive} % linear scale power
+        noisePowersPerSample_W double {mustBePositive} % linear scale power
         integrationWeights double {mustBePositive}
         signalsMatchFiltered double % (Ns + L - 1 x Nrx matrix)
         signalsIntegrated double
@@ -58,37 +68,79 @@ classdef spu < handle
             net = obj.interface.network;
         end
 
-        function cfg = get.configuration(obj)
-            cfg = obj.configuration;
-            % cfg.PD = cfg.PFA.^(1/(1 + 10.^(.1*obj.outputSNR)));
-            % cfg.threshold = 10*log10(log(1./cfg.PFA.^2)) + 10*log10(sum(obj.noisePowers./(2*obj.expectedAmplitudeRatios.^2))); 
+        function SNRin = get.inputSNR_dB(obj)
+            SNRin = obj.interface.inputSNR_dB;
+        end
+
+        function snr = get.outputSNR_lin(obj)
+            snr = sum(10.^(.1*(obj.network.processingGain_dB.' + obj.inputSNR_dB)), 2);
+        end
+
+        function snr = get.outputSNR_dB(obj)
+            snr = 10*log10(obj.outputSNR_lin);
+        end
+
+        function PD = get.ROC(obj)
             if obj.network.multiTransmitter
-                cfg.threshold = nan;
+                PD = @(PFA, SNR) nan;
             else
                 switch obj.network.networkCoherency
                     case "coherent"
                         switch obj.processingAlgorithm
                             case 1
-                                cfg.threshold = 2*sqrt(obj.outputSNR)*erfcinv(2*cfg.PFA);
+                                PD = @(PFA, SNR) .5*erfc(erfcinv(2*PFA) - sqrt(SNR));
+                            case 2
+                            case 3
+                            case 4
+                                PD = @(PFA, SNR) marcumq(sqrt(2*SNR), sqrt(-2*log(PFA)));
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
                         end
                     case "short-term coherent"
-                        cfg.threshold = nan;
+                        PD = @(PFA, SNR) nan;
                     case "incoherent"
-                        cfg.threshold = nan;
+                        PD = @(PFA, SNR) nan;
                 end
             end
-            cfg.thresholddB = 20*log10(abs(cfg.threshold));
-            cfg.PD = erfc((sqrt(2)*cfg.threshold/sqrt(obj.outputSNR) - sqrt(obj.outputSNR))/2)/2;
         end
 
-        function n = get.noisePowersPerSample(obj)
-            n = 10.^(.1*[obj.network.activeReceivingNodes.noisePowerPerSample]); % kTBN
+        function T = get.threshold(obj)
+            if obj.network.multiTransmitter
+                T = @(PFA, SNR) nan;
+            else
+                switch obj.network.networkCoherency
+                    case "coherent"
+                        switch obj.processingAlgorithm
+                            case 1
+                                T = @(PFA, SNR) sqrt(SNR)*erfcinv(2*PFA);
+                            case 2
+                            case 3
+                            case 4
+                                T = @(PFA, SNR) sqrt(-SNR*log(PFA));
+                            otherwise
+                                error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
+                        end
+                    case "short-term coherent"
+                        T = @(PFA, SNR) nan;
+                    case "incoherent"
+                        T = @(PFA, SNR) nan;
+                end
+            end
+        end
+
+        function cfg = get.configuration(obj)
+            cfg = obj.configuration;
+            cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin);
+            cfg.threshold = obj.threshold(cfg.PFA, obj.outputSNR_lin);
+            cfg.threshold_dB = 20*log10(abs(cfg.threshold));
+        end
+
+        function n = get.noisePowersPerSample_W(obj)
+            n = 10.^(.1*[obj.network.activeReceivingNodes.noisePowerPerSample_dB]); % kTBN
         end
 
         function w = get.expectedAmplitudes(obj)
-            w = 10.^(.05*obj.interface.receivedPowerFromScatterers);
+            w = 10.^(.05*obj.interface.receivedPowerFromScatterers_dBW);
         end
 
         function w = get.integrationWeights(obj)
@@ -99,12 +151,10 @@ classdef spu < handle
                 switch obj.network.networkCoherency
                     case "coherent"
                         switch obj.processingAlgorithm
-                            case 1
-                                if obj.interface.configuration.noise
-                                    w = obj.expectedAmplitudes./obj.noisePowersPerSample;
-                                else
-                                    w = obj.expectedAmplitudes;
-                                end
+                            case 1 % Maximal ratio combining
+                                w = obj.expectedAmplitudes./obj.noisePowersPerSample_W;
+                            case 4
+                                w = obj.expectedAmplitudes./obj.noisePowersPerSample_W;
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
                         end
@@ -116,10 +166,6 @@ classdef spu < handle
                         warning('not implemented');
                 end
             end
-        end
-
-        function snr = get.outputSNR(obj)
-            snr = sum(10.^(.1*obj.network.processingGain.').*obj.expectedAmplitudes.^2./obj.noisePowersPerSample, 2);
         end
 
         function posScan = get.gridPoints(obj)
@@ -179,6 +225,12 @@ classdef spu < handle
                                 for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                                     Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID);
                                 end
+                            case 4 % linear-law envelope detector for strong signals
+                                yWeighted = obj.integrationWeights.*abs(obj.signalsMatchFiltered);
+                                Y = zeros(prod(obj.gridSize), 1);
+                                for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                                    Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID);
+                                end
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
                         end
@@ -227,9 +279,9 @@ classdef spu < handle
                 switch obj.network.networkCoherency
                     case "coherent"
                         switch obj.processingAlgorithm
-                            case 1
+                            case {1, 4}
                                 gridScan = obj.gridPointsMesh;
-                                z = abs(obj.signalsIntegrated); % real?
+                                z = real(obj.signalsIntegrated);
                                 pos = cell(1, obj.configuration.numberOfTargets);
                                 for targetID = 1 : obj.configuration.numberOfTargets
                                     idx = find(z > obj.configuration.threshold);
@@ -281,14 +333,16 @@ classdef spu < handle
             end
         end
 
-        function setconfiguration(obj, options)
+        function configure(obj, options)
             arguments
                 obj
                 options.numberOfTargets (1, 1) double {mustBeInteger, mustBePositive} = obj.configuration.numberOfTargets
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
+                options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 10)} = obj.processingAlgorithm;
             end
             obj.configuration.numberOfTargets = options.numberOfTargets;
             obj.configuration.PFA = options.PFA;
+            obj.processingAlgorithm = options.processingAlgorithm;
         end
 
         %%% visualization methods
@@ -397,23 +451,6 @@ classdef spu < handle
             grid on; grid minor;
         end
 
-        % function visualizeintegratedsignals2(obj)
-        %     Y = obj.signalIntegrated;
-        %     Ts = obj.network.receivingNodes(1).samplingPeriod;
-        %     switch obj.network.transmittingNodes(1).transmissionType
-        %         case "continuous"
-        %             N = 2*unique([obj.network.receivingNodes.numberOfSamples]) - 1;
-        %         case "pulsed"
-        %             N = unique([obj.network.receivingNodes.numberOfSamples]) + unique([obj.network.pulseWidthSample]) - 1;
-        %     end
-        %     t1 = (1 : N)*Ts;
-        %     t2 = (-N + 1 : N - 1)*Ts;
-        %     figure; mesh(t2, t1, 20*log10(abs(Y)));
-        %     grid on; grid minor; colorbar;
-        %     xlabel('time difference (s)'); ylabel('time delay RX1 (s)'); zlabel('power (dB)');
-        %     title('integrated signal');
-        % end
-
         function visualizeintegratedsignals(obj, options)
             arguments
                 obj
@@ -472,12 +509,12 @@ classdef spu < handle
                     posRX = posRX(dims, :); posTX = posTX(dims, :);
                     plot3(posRX(1, :), posRX(2, :), repmat(maxY, [1, size(posRX, 2)]), 'vb', 'LineWidth', 2);
                     plot3(posTX(1, :), posTX(2, :), repmat(maxY, [1, size(posTX, 2)]), 'vr', 'LineWidth', 2);
-                    x = obj.interface.targets.position(dims, :)/1e3;
-                    plot3(x(1, :), x(2, :), repmat(maxY, [1, size(x, 2)]), '+k', 'LineWidth', 2);
                     for targetID = 1 : obj.configuration.numberOfTargets
                         estimations = pos{targetID}(dims, :)/1e3;
                         plot3(estimations(1, :), estimations(2, :), repmat(maxY, [1, size(estimations, 2)]), 'om', 'LineWidth', 2);
                     end
+                    x = obj.interface.targets.position(dims, :)/1e3;
+                    plot3(x(1, :), x(2, :), repmat(maxY, [1, size(x, 2)]), '+k', 'LineWidth', 2);
                     m = mesh(x2, x1, Y);
                     m.FaceColor = 'flat'; colorbar;
                     grid on; grid minor; view(0, 90);
@@ -485,7 +522,7 @@ classdef spu < handle
                     title('integrated signal'); hold off;
                 case 3
             end
-            legend('RX', 'TX', 'targets', 'estimations', 'Location', 'best');
+            legend('RX', 'TX', 'estimations', 'targets', 'Location', 'best');
         end
 
         function visualizeestimation(obj)
@@ -524,6 +561,25 @@ classdef spu < handle
             grid on; grid minor; title('scenario');
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
             legend('RX', 'TX', 'targets', 'estimations', 'Location', 'best');
+        end
+
+        function visualizereceiveroperatingcharacteristics(obj, options)
+            arguments
+                obj
+                options.snr_dB (1, :) double = [0 3 10 13] % dB
+            end
+            nop = 1000;
+            PFA = logspace(-10, 0, nop);
+            PD = zeros(nop, length(options.snr_dB));
+            for k = 1 : length(options.snr_dB)
+                PD(:, k) = obj.ROC(PFA, 10.^(.1*options.snr_dB(k)));
+            end
+            figure; semilogx(PFA, PD);
+            grid on; grid minor;
+            xlabel('PFA'); ylabel('PD');
+            leg = legend(num2str(options.snr_dB.'), 'Location', 'best');
+            title(leg, 'SNR');
+            title("Receiver operating characteristic (ROC) curve of \color{red}" + obj.network.networkCoherency + "\color{black} network with algorithm \color{blue}L_{" + num2str(obj.processingAlgorithm) + "}");
         end
     end
 end

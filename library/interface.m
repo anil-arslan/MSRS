@@ -7,7 +7,7 @@ classdef interface < handle
         targets (1, 1) target = target;
         environment (1, 1) %%%%% not implemented
         configuration (1, 1) struct = struct('noise', false, 'directPath', false)
-        monteCarlo (1, 1) struct = struct('seed', 0, 'numberOfTrials', 1) %%%%% not implemented %%%%%
+        monteCarlo (1, 1) struct = struct('seed', 0, 'numberOfTrials', 1)
     end
 
     properties (Dependent)
@@ -16,9 +16,9 @@ classdef interface < handle
         timeDelay double % seconds (Ntx x Nrx x Nt matrix)
         dopplerShift double % Hz (Ntx x Nrx x Nt matrix)
         dopplerShiftBisector double % Hz (Ntx x Nrx x Nt matrix)
-        receivedPowerFromScatterers double % dB watt (Ntx x Nrx x Nt matrix)
-        receivedPowerFromTransmittingNodes double % dB watt (Ntx x Nrx matrix)
-        inputSNR double % dB (Ntx x Nrx x Nt matrix)
+        receivedPowerFromScatterers_dBW double % dB watt (Ntx x Nrx x Nt matrix)
+        receivedPowerFromTransmittingNodes_dBW double % dB watt (Ntx x Nrx matrix)
+        inputSNR_dB double % dB (Ntx x Nrx x Nt matrix)
             %%% signal
             signalReceivedFromScatterers double % complex received signal (Ns x Nrx x Nt x Ntx matrix)
             signalReceivedFromTransmittingNodes double % complex received direct path signal (Ns x Nrx x Ntx matrix)
@@ -65,6 +65,10 @@ classdef interface < handle
         numberOfBistaticPairs (1, 1) double {mustBeInteger, mustBeNonnegative} % Nrx*Ntx
     end
 
+    properties (Access = private)
+        seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(seedShuffle, [0, 1])}
+    end
+
     properties (Constant)
         speedOfLight (1, 1) double {mustBePositive} = physconst('LightSpeed');
     end
@@ -93,27 +97,27 @@ classdef interface < handle
             tau = obj.bistaticRange/obj.speedOfLight;
         end
 
-        function Pr = get.receivedPowerFromScatterers(obj)
+        function Pr = get.receivedPowerFromScatterers_dBW(obj)
             % (Ntx x Nrx x Nt matrix)
             rng(obj.monteCarlo.seed);
-            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower].') + permute(obj.targets.RCS_dbms, [1 3 2]) ...
+            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower_W].') + permute(obj.targets.RCS_dbms, [1 3 2]) ...
             + 20*log10([obj.network.activeTransmittingNodes.carrierWavelength].');
-            powerLosses = [obj.network.activeReceivingNodes.systemLoss] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
+            powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
             Pr = powerGains - powerLosses;
         end
 
-        function Pr = get.receivedPowerFromTransmittingNodes(obj)
+        function Pr = get.receivedPowerFromTransmittingNodes_dBW(obj)
             % (Ntx x Nrx matrix)
             %%%%% not implemented %%%%%
-            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower].') ...
+            powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower_W].') ...
             + 20*log10([obj.network.activeTransmittingNodes.carrierWavelength].');
-            powerLosses = [obj.network.activeReceivingNodes.systemLoss] + 30*log10(4*pi) + 20*log10(obj.distanceBaseline);
+            powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceBaseline);
             Pr = powerGains - powerLosses;
         end
 
-        function SNRin = get.inputSNR(obj)
+        function SNRin = get.inputSNR_dB(obj)
             % (Ntx x Nrx x Nt matrix)
-            SNRin = obj.receivedPowerFromScatterers - [obj.network.activeReceivingNodes.noisePowerPerSample];
+            SNRin = obj.receivedPowerFromScatterers_dBW - [obj.network.activeReceivingNodes.noisePowerPerSample_dB];
         end
 
         %%% doppler
@@ -137,7 +141,7 @@ classdef interface < handle
             tau = [obj.network.activeReceivingNodes.samplingInstants] - permute(obj.timeDelay, [4, 2, 3, 1]); % Ns x Nrx x Nt x Ntx matrix
             fd = permute(obj.dopplerShift, [4, 2, 3, 1]); % 1 x Nrx x Nt x Ntx matrix
             fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -2); % 1 x 1 x 1 x Ntx matrix
-            A = permute(10.^(.05*obj.receivedPowerFromScatterers), [4, 2, 3, 1]); % 1 x Nrx x Nt x Ntx matrix
+            A = permute(10.^(.05*obj.receivedPowerFromScatterers_dBW), [4, 2, 3, 1]); % 1 x Nrx x Nt x Ntx matrix
             waveforms = zeros(size(tau)); % Ns x Nrx x Nt x Ntx matrix
             for txID = 1 : obj.numberOfTransmittingNodes
                 waveforms(:, :, :, txID) = obj.network.activeTransmittingNodes(txID).waveform(-tau(:, :, :, txID));
@@ -148,7 +152,7 @@ classdef interface < handle
                 NsUnique = unique(Ns);
                 switch length(NsUnique)
                     case 1
-                        s = s + 10.^(.05*[obj.network.activeReceivingNodes.noisePowerPerSample])/sqrt(2).*(randn(NsUnique, obj.numberOfReceivingNodes) + 1j*randn(NsUnique, obj.numberOfReceivingNodes));
+                        s = s + 10.^(.05*[obj.network.activeReceivingNodes.noisePowerPerSample_dB])/sqrt(2).*(randn(NsUnique, obj.numberOfReceivingNodes) + 1j*randn(NsUnique, obj.numberOfReceivingNodes));
                     otherwise
                         error('not implemented');
                 end
@@ -160,7 +164,7 @@ classdef interface < handle
             %%%%% not implemented %%%%%
             tau = [obj.network.activeReceivingNodes.samplingInstants] - permute(obj.network.directPathDelay, [3, 2, 1]); % Ns x Nrx x Ntx matrix
             fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1); % 1 x 1 x Ntx matrix
-            A = permute(10.^(.05*obj.receivedPowerFromTransmittingNodes), [3, 2, 1]); % 1 x Nrx x Ntx matrix
+            A = permute(10.^(.05*obj.receivedPowerFromTransmittingNodes_dBW), [3, 2, 1]); % 1 x Nrx x Ntx matrix
             waveforms = zeros(size(tau)); % Ns x Nrx x Ntx matrix
             for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                 waveforms(:, :, txID) = obj.network.activeTransmittingNodes(txID).waveform(tau(:, :, txID));
@@ -351,6 +355,15 @@ classdef interface < handle
             N = obj.network.numberOfActiveBistaticPairs;
         end
 
+        function mc = get.monteCarlo(obj)
+            mc.numberOfTrials = obj.monteCarlo.numberOfTrials;
+            if obj.seedShuffle
+                mc.seed = 'shuffle';
+            else
+                mc.seed = obj.monteCarlo.seed;
+            end
+        end
+
         %%% configuration
 
         function configure(obj, options)
@@ -361,6 +374,18 @@ classdef interface < handle
             end
             obj.configuration.noise = options.noise;
             obj.configuration.directPath = options.directPath;
+        end
+
+        function configureMonteCarlo(obj, options)
+            arguments
+                obj
+                options.numberOfTrials (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrials
+                options.seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.seedShuffle, [0, 1])} = obj.seedShuffle
+                options.seed (1, 1) {mustBeNonnegative, mustBeInteger, mustBeLessThan(options.seed, 4294967296)} = 0
+            end
+            obj.monteCarlo.numberOfTrials = options.numberOfTrials;
+            obj.seedShuffle = options.seedShuffle;
+            obj.monteCarlo.seed = options.seed;
         end
 
         %%% visualization methods
@@ -500,7 +525,7 @@ classdef interface < handle
                 title('iso delay curves'); drawnow;
             end
             if any(strcmpi(options.curves, "power")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.inputSNR(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
+                figure; contourf(x, y, reshape(obj.inputSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);

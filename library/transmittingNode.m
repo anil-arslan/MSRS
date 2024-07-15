@@ -4,7 +4,7 @@ classdef transmittingNode < handle & dynamicprops
 
     properties (SetAccess = private, GetAccess = public)
         position (3, 1) double = zeros(3, 1)
-        inputPower (1, 1) double {mustBePositive} = 1e3 % Watt
+        inputPower_W (1, 1) double {mustBePositive} = 1e3 % Watt
     end
 
     properties (Dependent)
@@ -53,17 +53,17 @@ classdef transmittingNode < handle & dynamicprops
         function obj = transmittingNode(options)
             arguments
                 options.position (3, :) double = zeros(3, 1)
-                options.inputPower (1, :) double {mustBePositive} = 1e3 % Watt
+                options.inputPower_W (1, :) double {mustBePositive} = 1e3 % Watt
                 options.carrierFrequency (1, :) double {mustBePositive} = 1e9 % Hz
                 options.pulseWidth (1, :) double {mustBeNonnegative} = 1e-6 % sec
             end
             %transmittingNode Construct an instance of this class
             %   Detailed explanation goes here
-            numberOfNodes = max([size(options.position, 2), numel(options.inputPower), numel(options.carrierFrequency), ...
+            numberOfNodes = max([size(options.position, 2), numel(options.inputPower_W), numel(options.carrierFrequency), ...
                 numel(options.pulseWidth)]);
             if numberOfNodes == 1
                 obj.position = options.position;
-                obj.inputPower = options.inputPower;
+                obj.inputPower_W = options.inputPower_W;
                 obj.carrierFrequency = options.carrierFrequency;
                 obj.pulseWidth = options.pulseWidth;
                 obj.setunmodulation;
@@ -73,7 +73,7 @@ classdef transmittingNode < handle & dynamicprops
                 elseif size(options.position, 2) ~= numberOfNodes
                     error('number of transmitting nodes is %d', numberOfNodes);
                 end
-                for fieldName = ["inputPower", "carrierFrequency", "pulseWidth"]
+                for fieldName = ["inputPower_W", "carrierFrequency", "pulseWidth"]
                     if isscalar(options.(fieldName))
                         options.(fieldName) = repmat(options.(fieldName), 1, numberOfNodes);
                     elseif numel(options.(fieldName)) ~= numberOfNodes
@@ -84,7 +84,7 @@ classdef transmittingNode < handle & dynamicprops
                 for nodeID = 1 : numberOfNodes
                     obj(nodeID) = transmittingNode( ...
                         'position', options.position(:, nodeID), ...
-                        'inputPower', options.inputPower(nodeID), ...
+                        'inputPower_W', options.inputPower_W(nodeID), ...
                         'carrierFrequency', options.carrierFrequency(nodeID), ...
                         'pulseWidth', options.pulseWidth(nodeID));
                 end
@@ -94,7 +94,7 @@ classdef transmittingNode < handle & dynamicprops
         %%% get methods
 
         function E = get.transmittedEnergy(obj)
-            E = obj.inputPower.*obj.pulseWidth.*obj.numberOfPulses;
+            E = obj.inputPower_W.*obj.pulseWidth.*obj.numberOfPulses;
         end
 
         function out = get.transmissionType(obj)
@@ -175,13 +175,13 @@ classdef transmittingNode < handle & dynamicprops
         function settransmission(obj, options)
             arguments
                 obj
-                options.inputPower (1, :) double {mustBePositive} = [] % W
+                options.inputPower_W (1, :) double {mustBePositive} = [] % W
                 options.carrierFrequency (1, :) double {mustBePositive} = [] % Hz
                 options.pulseWidth (1, :) double {mustBeNonnegative} = [] % sec
                 options.dutyCycle (1, :) double {mustBeNonnegative} = [] % sec
             end
             numberOfTransmittingNodes = numel(obj);
-            fieldNames = ["inputPower", "carrierFrequency", "pulseWidth", "dutyCycle"];
+            fieldNames = ["inputPower_W", "carrierFrequency", "pulseWidth", "dutyCycle"];
             for fieldName = fieldNames
                 if ~isempty(options.(fieldName))
                     if isscalar(options.(fieldName))
@@ -333,7 +333,7 @@ classdef transmittingNode < handle & dynamicprops
                     strTitle = ['imaginary part of ' strTitle];
             end
             title(strTitle);
-            leg = legend(num2str([obj.id].'), 'Location', 'best');
+            leg = legend(num2str((1 : numberOfTransmittingNodes).'), 'Location', 'best');
             title(leg, 'TX ID');
             hold off; drawnow;
         end

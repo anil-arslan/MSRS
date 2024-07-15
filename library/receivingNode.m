@@ -4,13 +4,13 @@ classdef receivingNode < handle
 
     properties (SetAccess = private, GetAccess = public)
         position (3, 1) double = zeros(3, 1)
-        systemLoss (1, 1) double {mustBeNonnegative} = 0 % dB
-        noiseFigure (1, 1) double {mustBeNonnegative} = 0 % dB
+        systemLoss_dB (1, 1) double {mustBeNonnegative} = 0 % dB
+        noiseFigure_dB (1, 1) double {mustBeNonnegative} = 0 % dB
         temperature (1, 1) double {mustBeNonnegative} = 300 % Kelvin
     end
 
     properties (Dependent)
-        noisePowerPerSample (1, 1) double % dB watt
+        noisePowerPerSample_dB (1, 1) double % dB watt
     end
 
     properties (SetAccess = private, GetAccess = public)
@@ -52,10 +52,10 @@ classdef receivingNode < handle
                 numel(options.temperature), numel(options.noiseFigure), numel(options.CPIsecond)]);
             if numberOfNodes == 1
                 obj.position = options.position;
-                obj.systemLoss = options.systemLoss;
+                obj.systemLoss_dB = options.systemLoss;
                 obj.samplingFrequency = options.samplingFrequency;
                 obj.temperature = options.temperature;
-                obj.noiseFigure = options.noiseFigure;
+                obj.noiseFigure_dB = options.noiseFigure;
                 obj.CPI = options.CPIsecond;
             else
                 if size(options.position, 2) == 1
@@ -83,8 +83,8 @@ classdef receivingNode < handle
             end
         end
 
-        function Pn = get.noisePowerPerSample(obj)
-            Pn = 10*log10(obj.samplingFrequency*obj.temperature*obj.constantBoltzmann) + obj.noiseFigure;
+        function Pn = get.noisePowerPerSample_dB(obj)
+            Pn = 10*log10(obj.samplingFrequency*obj.temperature*obj.constantBoltzmann) + obj.noiseFigure_dB;
         end
 
         function R = get.listenedRadius(obj)
