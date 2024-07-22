@@ -4,8 +4,12 @@ classdef spu < handle
 
     properties (SetAccess = private, GetAccess = public)
         interface (1, :) interface = interface.empty()
+        monteCarlo (1, 1) struct = struct( ...
+            'seed', 0, ...
+            'numberOfTrials', 1, ...
+            'numberOfTrialsParallel', 1)
         gridResolution (3, 1) double {mustBeNonnegative} = 100*ones(3, 1)
-        configuration (1, 1) struct = struct('numberOfTargets', 1, 'PFA', 1e-6)
+        configuration (1, 1) struct = struct('PFA', 1e-6)
         processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(processingAlgorithm, 1, 10)} = 1
         % 1: coherent detector (deterministic signal)
         % 2: coherent detector (stochastic signal, dependent phase, dependent amplitude)
@@ -24,7 +28,7 @@ classdef spu < handle
     end
 
     properties (SetAccess = private, GetAccess = public)
-        integrationIndices double {mustBeInteger, mustBePositive}
+        integrationIndices double {mustBeInteger, mustBePositive} % (Ntx x Nrx x Ni vector)
     end
 
     properties (Dependent)
@@ -36,14 +40,25 @@ classdef spu < handle
         expectedAmplitudes double {mustBePositive} % linear scale magnitude normalized to first receiver (reference)
         noisePowersPerSample_W double {mustBePositive} % linear scale power
         integrationWeights double {mustBePositive}
-        signalsMatchFiltered double % (Ns + L - 1 x Nrx matrix)
-        signalsIntegrated double
+        signalsMatchFilteredTrials double % (Ns + L - 1 x Nrx x Nmcp matrix) Ncmp : number of parallel trials
+    end
 
-        estimatedTimeDelaysFromMatchFiltration double
-        timeOfArrivalErrorFromMatchFiltration double
+    properties (SetAccess = private, GetAccess = public)
+        signalsMatchFiltered double = 0 % (Ns + L - 1 x Nrx x Nmcp matrix) Ncmp : number of parallel trials
+    end
+
+    properties (Dependent)
+        signalsIntegrated double % (Ni x Ncmp matrix)
+        estimatedTimeDelaysFromMatchFiltration double % (Ntx x Nrx x Nmcp matrix) Ncmp : number of parallel trials
+        timeOfArrivalErrorFromMatchFiltration double % (Ntx x Nrx x Nmcp matrix) Ncmp : number of parallel trials
+        hypothesisTestingResults cell
         estimatedPositionsFromIntegration cell
         positionError double
         positionErrorTotal double
+    end
+
+    properties (Access = private)
+        seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(seedShuffle, [0, 1])}
     end
 
     methods
@@ -63,6 +78,16 @@ classdef spu < handle
         end
 
         %%% get methods
+
+        function mc = get.monteCarlo(obj)
+            mc.numberOfTrials = obj.monteCarlo.numberOfTrials;
+            mc.numberOfTrialsParallel = obj.monteCarlo.numberOfTrialsParallel;
+            if obj.seedShuffle
+                mc.seed = 'shuffle';
+            else
+                mc.seed = obj.monteCarlo.seed;
+            end
+        end
 
         function net = get.network(obj)
             net = obj.interface.network;
@@ -130,8 +155,13 @@ classdef spu < handle
 
         function cfg = get.configuration(obj)
             cfg = obj.configuration;
-            cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin);
-            cfg.threshold = obj.threshold(cfg.PFA, obj.outputSNR_lin);
+            if obj.outputSNR_lin
+                cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin);
+                cfg.threshold = obj.threshold(cfg.PFA, obj.outputSNR_lin);
+            else
+                cfg.PD = obj.ROC(cfg.PFA, 1./obj.noisePowersPerSample_W);
+                cfg.threshold = obj.threshold(cfg.PFA, 1./obj.noisePowersPerSample_W);
+            end
             cfg.threshold_dB = 20*log10(abs(cfg.threshold));
         end
 
@@ -153,8 +183,12 @@ classdef spu < handle
                         switch obj.processingAlgorithm
                             case 1 % Maximal ratio combining
                                 w = obj.expectedAmplitudes./obj.noisePowersPerSample_W;
+                                w(w == 0) = 1./obj.noisePowersPerSample_W(w == 0);
+                                w(w == inf) = obj.expectedAmplitudes(w == inf);
                             case 4
                                 w = obj.expectedAmplitudes./obj.noisePowersPerSample_W;
+                                w(w == 0) = 1./obj.noisePowersPerSample_W(w == 0);
+                                w(w == inf) = obj.expectedAmplitudes(w == inf);
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
                         end
@@ -198,38 +232,43 @@ classdef spu < handle
             tau = permute(rangeReceivers + rangeTransmitters, [2 3 4 1])/obj.network.speedOfLight;
         end
 
-        function y = get.signalsMatchFiltered(obj)
-            % (Ns + L - 1 x Nrx matrix)
+        function y = get.signalsMatchFilteredTrials(obj)
+            % (Ns + L - 1 x Nrx x Ncmp matrix) Ncmp : number of parallel trials
             t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
             demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
             mf = obj.network.matchFilter; % L x Nrx x Ntx matrix
-            s = obj.interface.signalSuperposed; % Ns x Nrx matrix
-            y = zeros(size(s, 1) + size(mf, 1) - 1, obj.network.numberOfActiveReceivingNodes);
-            for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                y(:, rxID) = conv(s(: ,rxID).*demodulator(:, rxID), conj((mf(:, rxID, 1))));
+            y = zeros(size(t, 1) + size(mf, 1) - 1, obj.network.numberOfActiveReceivingNodes);
+            for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                s = obj.interface.signalSuperposed; % Ns x Nrx matrix
+                for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                    y(:, rxID, mcID) = conv(s(: ,rxID).*demodulator(:, rxID), conj((mf(:, rxID, 1))));
+                end
             end
         end
 
         function Y = get.signalsIntegrated(obj)
-            % (Ns + L - 1 x 2*(Ns + L - 1) - 1 matrix)
+            % (Ni x Nmcp matrix)
             if obj.network.multiTransmitter
                 Y = nan;
                 warning('not implemented');
             else
+                if isscalar(obj.signalsMatchFiltered) || isempty(obj.signalsMatchFiltered)
+                    obj.setmatchfilteredsignals;
+                end
                 switch obj.network.networkCoherency
                     case "coherent"
                         switch obj.processingAlgorithm
                             case 1
                                 yWeighted = obj.integrationWeights.*obj.signalsMatchFiltered;
-                                Y = zeros(prod(obj.gridSize), 1);
+                                Y = zeros(prod(obj.gridSize), obj.monteCarlo.numberOfTrialsParallel);
                                 for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                                    Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID);
+                                    Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID, :);
                                 end
                             case 4 % linear-law envelope detector for strong signals
                                 yWeighted = obj.integrationWeights.*abs(obj.signalsMatchFiltered);
-                                Y = zeros(prod(obj.gridSize), 1);
+                                Y = zeros(prod(obj.gridSize), obj.monteCarlo.numberOfTrialsParallel);
                                 for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                                    Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID);
+                                    Y = Y + yWeighted(obj.integrationIndices(1, rxID, :), rxID, :);
                                 end
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
@@ -248,19 +287,24 @@ classdef spu < handle
             if obj.network.multiTransmitter
                 tau = nan;
             else
+                if isscalar(obj.signalsMatchFiltered) || isempty(obj.signalsMatchFiltered)
+                    obj.setmatchfilteredsignals;
+                end
                 [~, ind] = max(abs(obj.signalsMatchFiltered));
-                tau = zeros(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes);
-                for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                    Ts = obj.network.activeReceivingNodes(rxID).samplingPeriod;
-                    for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                        switch obj.network.activeTransmittingNodes(txID).transmissionType
-                            case "continuous"
-                                error('not implemented');
-                            case "pulsed"
-                                L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                                N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
-                                timeDelays = (-L : N)*Ts;
-                                tau(txID, rxID) = timeDelays(ind(rxID));
+                tau = zeros(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes, obj.monteCarlo.numberOfTrialsParallel);
+                for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                        Ts = obj.network.activeReceivingNodes(rxID).samplingPeriod;
+                        for txID = 1 : obj.network.numberOfActiveTransmittingNodes
+                            switch obj.network.activeTransmittingNodes(txID).transmissionType
+                                case "continuous"
+                                    error('not implemented');
+                                case "pulsed"
+                                    L = obj.network.pulseWidthSample(rxID, txID) - 2;
+                                    N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                                    timeDelays = (-L : N)*Ts;
+                                    tau(txID, rxID, mcID) = timeDelays(ind(rxID, mcID));
+                            end
                         end
                     end
                 end
@@ -271,46 +315,60 @@ classdef spu < handle
             err = obj.interface.timeDelay - obj.estimatedTimeDelaysFromMatchFiltration;
         end
 
-        function pos = get.estimatedPositionsFromIntegration(obj)
+        function idx = get.hypothesisTestingResults(obj)
             if obj.network.multiTransmitter
-                pos = nan;
+                idx = nan;
                 warning('not implemented');
             else
                 switch obj.network.networkCoherency
                     case "coherent"
                         switch obj.processingAlgorithm
                             case {1, 4}
-                                gridScan = obj.gridPointsMesh;
                                 z = real(obj.signalsIntegrated);
-                                pos = cell(1, obj.configuration.numberOfTargets);
-                                for targetID = 1 : obj.configuration.numberOfTargets
-                                    idx = find(z > obj.configuration.threshold);
-                                    pos{targetID} = [gridScan.x(idx) gridScan.y(idx) gridScan.z(idx)].';
+                                idx = cell(1, obj.monteCarlo.numberOfTrialsParallel);
+                                for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                                    idx{mcID} = find(z(:, mcID) > obj.configuration.threshold);
                                 end
                             otherwise
                                 error('Processing algorithm %d cannot be used for the current configuration', obj.processingAlgorithm);
                         end
                     case "short-term coherent"
-                        pos = nan;
+                        idx = nan;
                         warning('not implemented');
                     case "incoherent"
-                        pos = nan;
+                        idx = nan;
                         warning('not implemented');
                 end
             end
         end
 
+        function pos = get.estimatedPositionsFromIntegration(obj)
+            gridScan = obj.gridPointsMesh;
+            pos = cell(1, obj.monteCarlo.numberOfTrialsParallel);
+            idx = obj.hypothesisTestingResults;
+            for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                pos{mcID} = [gridScan.x(idx{mcID}) gridScan.y(idx{mcID}) gridScan.z(idx{mcID})].';
+            end
+        end
+
         function err = get.positionError(obj)
-            err = zeros(3, obj.interface.numberOfTargets, obj.configuration.numberOfTargets);
-            for estimationID = 1 : obj.configuration.numberOfTargets
+            err = cell(1, obj.monteCarlo.numberOfTrialsParallel);
+            for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                estimatedPositions = obj.estimatedPositionsFromIntegration{mcID};
+                numberOfEstimations = size(estimatedPositions, 2);
+                err{mcID} = zeros(3, numberOfEstimations, obj.interface.numberOfTargets);
                 for targetID = 1 : obj.interface.numberOfTargets
-                    err(:, targetID, estimationID) = obj.interface.targets.position(:, targetID) - obj.estimatedPositionsFromIntegration{estimationID}(:, 1 : obj.configuration.numberOfTargets);
+                    err{mcID}(:, :, targetID) = obj.interface.targets.position(:, targetID) - estimatedPositions;
                 end
             end
         end
 
         function err = get.positionErrorTotal(obj)
-            err = sqrt(sum(obj.positionError.^2));
+            posErr = obj.positionError;
+            err = cell(1, obj.monteCarlo.numberOfTrialsParallel);
+            for mcID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                err{mcID} = sqrt(sum(posErr{mcID}.^2));
+            end
         end
 
         %%% set methods
@@ -333,18 +391,71 @@ classdef spu < handle
             end
         end
 
+        function setmatchfilteredsignals(obj)
+            obj.signalsMatchFiltered = obj.signalsMatchFilteredTrials;
+        end
+
         function configure(obj, options)
             arguments
                 obj
-                options.numberOfTargets (1, 1) double {mustBeInteger, mustBePositive} = obj.configuration.numberOfTargets
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
-                options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 10)} = obj.processingAlgorithm;
+                options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 10)} = obj.processingAlgorithm
+                options.numberOfTrials (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrials
+                options.numberOfTrialsParallel (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrialsParallel
+                options.seed (1, 1) {mustBeNonnegative, mustBeInteger, mustBeLessThan(options.seed, 4294967296)} = 0
+                options.seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.seedShuffle, [0, 1])} = obj.seedShuffle
             end
-            obj.configuration.numberOfTargets = options.numberOfTargets;
             obj.configuration.PFA = options.PFA;
             obj.processingAlgorithm = options.processingAlgorithm;
+            obj.monteCarlo.numberOfTrials = options.numberOfTrials;
+            obj.monteCarlo.numberOfTrialsParallel = options.numberOfTrialsParallel;
+            obj.monteCarlo.seed = options.seed;
+            obj.seedShuffle = options.seedShuffle;
+            rng(obj.monteCarlo.seed);
         end
 
+        %%% monte carlo simulation
+
+        function [PD, PFA] = simulatedetection(obj)
+            arguments
+                obj
+            end
+            gridScan = obj.gridPointsMesh;
+            dims = size(gridScan.x) ~= 1;
+            dimensions = {"y", "x", "z"};
+            dimensions = dimensions(dims);
+            numberOfDetections = zeros(obj.gridSize);
+            numberOfTotalTrials = obj.monteCarlo.numberOfTrials*obj.monteCarlo.numberOfTrialsParallel;
+            for mcID = 1 : obj.monteCarlo.numberOfTrials
+                obj.setmatchfilteredsignals;
+                idx = obj.hypothesisTestingResults;
+                for mcpID = 1 : obj.monteCarlo.numberOfTrialsParallel
+                    numberOfDetections(idx{mcpID}) = numberOfDetections(idx{mcpID}) + 1;
+                end
+            end
+            probabilities = numberOfDetections./numberOfTotalTrials;
+            targetIDx = find(sum(abs(obj.interface.targets.position - permute([gridScan.x(:) gridScan.y(:) gridScan.z(:)], [2 3 1])).^2) < sum(abs(obj.gridResolution(dims)).^2));
+            noiseIDx = setdiff(1 : prod(obj.gridSize), targetIDx);
+            PD = zeros(obj.gridSize([2 1 3])); PFA = zeros(obj.gridSize([2 1 3]));
+            PD(targetIDx) = probabilities(targetIDx);
+            PFA(noiseIDx) = probabilities(noiseIDx);
+            xLabel = dimensions{1} + " (km)";
+            yLabel = dimensions{2} + " (km)";
+            x1 = gridScan.(dimensions{1})/1e3;
+            x2 = gridScan.(dimensions{2})/1e3;
+            figure; m = mesh(x2, x1, PD); colorbar;
+            m.FaceColor = 'flat'; colorbar; hold on;
+            x = obj.interface.targets.position(dims, :)/1e3;
+            plot3(x(1, :), x(2, :), ones(1, size(x, 2)), '+k', 'LineWidth', 2);
+            grid on; grid minor; view(0, 90);
+            xlabel(xLabel); ylabel(yLabel); zlabel('P_D');
+            title('Probability of detection'); hold off;
+            figure; m = mesh(x2, x1, PFA); colorbar;
+            m.FaceColor = 'flat'; colorbar;
+            grid on; grid minor; view(0, 90);
+            xlabel(xLabel); ylabel(yLabel); zlabel('P_{FA}');
+            title('Probability of false alarm'); hold off;
+        end
         %%% visualization methods
 
         function visualizefilteredsignals(obj, options)
@@ -353,8 +464,12 @@ classdef spu < handle
                 options.receivingNodeIDs (1, :) double {mustBeInteger, mustBeNonnegative} = 1 : obj.network.numberOfActiveReceivingNodes
             end
             mustBeInRange(options.receivingNodeIDs, 1, obj.network.numberOfReceivingNodes);
+            mcID = 1;
             figure; hold on;
-            s = obj.signalsMatchFiltered(:, options.receivingNodeIDs);
+            if isscalar(obj.signalsMatchFiltered) || isempty(obj.signalsMatchFiltered)
+                obj.setmatchfilteredsignals;
+            end
+            s = obj.signalsMatchFiltered(:, options.receivingNodeIDs, mcID); % first trial
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 Ts = obj.network.activeReceivingNodes(rxID).samplingPeriod;
                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
@@ -461,7 +576,8 @@ classdef spu < handle
                 return;
             end
             figure; hold on;
-            pos = obj.estimatedPositionsFromIntegration;
+            mcID = 1;
+            pos = obj.estimatedPositionsFromIntegration(:, mcID); % first trial
             gridScan = obj.gridPointsMesh;
             dims = size(gridScan.x) ~= 1;
             dimensions = {"y", "x", "z"};
@@ -470,7 +586,7 @@ classdef spu < handle
                 case 1
                     xLabel = dimensions{1} + " (km)";
                     x1 = gridScan.(dimensions{1})/1e3;
-                    plot(x1, 20*log10(abs(obj.signalsIntegrated)));
+                    plot(x1, 20*log10(abs(obj.signalsIntegrated(:, mcID)))); % first trial
                     grid on; grid minor;
                     xlabel(xLabel); ylabel('power (dB)');
                     title('integrated signal');
@@ -478,13 +594,13 @@ classdef spu < handle
                     switch options.plot
                         case "magnitude"
                             zLabel = 'magnitude';
-                            Y = reshape(abs(obj.signalsIntegrated), obj.gridSize([2, 1, 3]));
+                            Y = reshape(abs(obj.signalsIntegrated(:, mcID)), obj.gridSize([2, 1, 3])); % first trial
                         case "real"
                             zLabel = 'real part';
-                            Y = reshape(real(obj.signalsIntegrated), obj.gridSize([2, 1, 3]));
+                            Y = reshape(real(obj.signalsIntegrated(:, mcID)), obj.gridSize([2, 1, 3])); % first trial
                         case "imaginary"
                             zLabel = 'imaginary part';
-                            Y = reshape(imag(obj.signalsIntegrated), obj.gridSize([2, 1, 3]));
+                            Y = reshape(imag(obj.signalsIntegrated(:, mcID)), obj.gridSize([2, 1, 3])); % first trial
                     end
                     switch options.scale
                         case "linear"
@@ -509,12 +625,13 @@ classdef spu < handle
                     posRX = posRX(dims, :); posTX = posTX(dims, :);
                     plot3(posRX(1, :), posRX(2, :), repmat(maxY, [1, size(posRX, 2)]), 'vb', 'LineWidth', 2);
                     plot3(posTX(1, :), posTX(2, :), repmat(maxY, [1, size(posTX, 2)]), 'vr', 'LineWidth', 2);
-                    for targetID = 1 : obj.configuration.numberOfTargets
+                    for targetID = 1 : length(pos)
                         estimations = pos{targetID}(dims, :)/1e3;
                         plot3(estimations(1, :), estimations(2, :), repmat(maxY, [1, size(estimations, 2)]), 'om', 'LineWidth', 2);
                     end
                     x = obj.interface.targets.position(dims, :)/1e3;
                     plot3(x(1, :), x(2, :), repmat(maxY, [1, size(x, 2)]), '+k', 'LineWidth', 2);
+                    plot3(x2, x1, obj.configuration.threshold_dB*ones(size(x2)));
                     m = mesh(x2, x1, Y);
                     m.FaceColor = 'flat'; colorbar;
                     grid on; grid minor; view(0, 90);
@@ -526,6 +643,7 @@ classdef spu < handle
         end
 
         function visualizeestimation(obj)
+            mcID = 1;
             posRX = [obj.network.activeReceivingNodes.position]/1e3;
             posTX = [obj.network.activeTransmittingNodes.position]/1e3;
             figure; plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 2, 'MarkerSize', 10);
@@ -533,13 +651,9 @@ classdef spu < handle
             x = obj.interface.targets.position(1, :)/1e3;
             y = obj.interface.targets.position(2, :)/1e3;
             z = obj.interface.targets.position(3, :)/1e3;
-            if obj.interface.numberOfTargets < 11
-                plot3(x, y, z, '+k', 'LineWidth', 2, 'MarkerSize', 10);
-            else
-                plot3(x, y, z, '*k', 'LineWidth', 1, 'MarkerSize', 10);
-            end
+            plot3(x, y, z, '*k', 'LineWidth', 1, 'MarkerSize', 10);
             color = ['m', 'g', 'c'];
-            pos = obj.estimatedPositionsFromIntegration;
+            pos = obj.estimatedPositionsFromIntegration(:, mcID);
             for targetID = 1 : obj.configuration.numberOfTargets
                 xEstimation = pos{targetID}(1, :)/1e3;
                 yEstimation = pos{targetID}(2, :)/1e3;
@@ -552,7 +666,7 @@ classdef spu < handle
             end
             text(posRX(1, :), posRX(2, :), posRX(3, :), num2str([obj.network.activeReceivingNodes.id].'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
             text(posTX(1, :), posTX(2, :), posTX(3, :), num2str([obj.network.activeTransmittingNodes.id].'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
-            if obj.interface.numberOfTargets < 11
+            if size(posRX, 2) < 11
                 text(x, y, z, num2str((1 : obj.interface.numberOfTargets).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
             end
             posRX = repelem(posRX, 1, obj.interface.network.numberOfActiveTransmittingNodes);

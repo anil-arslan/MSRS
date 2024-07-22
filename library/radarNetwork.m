@@ -327,8 +327,8 @@ classdef radarNetwork < handle
             posTX = [obj.transmittingNodes.position]/1e3;
             figure; plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 3);
             hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 3);
-            text(posRX(1, :), posRX(2, :), posRX(3, :), num2str([obj.receivingNodes.id].'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
-            text(posTX(1, :), posTX(2, :), posTX(3, :), num2str([obj.transmittingNodes.id].'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
+            text(posRX(1, :), posRX(2, :), posRX(3, :), num2str((1 : obj.numberOfActiveReceivingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
+            text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
             posRX = repelem(posRX, 1, obj.numberOfTransmittingNodes);
             posTX = repmat(posTX, 1, obj.numberOfReceivingNodes);
             line([posRX(1, :); posTX(1, :)], [posRX(2, :); posTX(2, :)], [posRX(3, :); posTX(3, :)], 'lineStyle', '--', 'Color', 'k');

@@ -32,7 +32,7 @@ targets = target( ...
     ... 'position', [0 -d/2 0 d; 0 -d/2 0 -d; 0*[d/4 d/8 0 d]], ...
     ... 'velocity', [10 0 0 0; 50 -50 0 0; 0 0 0 0], ...
     'velocity', [0; 0; 0], ...
-    'meanRCS_dbms', 30);
+    'meanRCS_dbms', 0);
 % targets = target( ...
 %     'position', [d/4; -d/8; d/4], ...
 %     'meanRCS_dbms', 1e3);
@@ -47,7 +47,7 @@ sp.setintegrationindices;
 %%
 % transmitters.settaper("taperType", "rectwin");
 int.configure('noise', 1, 'directPath', 0);
-sp.configure("numberOfTargets", 1, "PFA", 1e-6);
+sp.configure("PFA", 1e-2);
 %%
 % int.visualizescenario;
 int.visualizereceivedsignals;
@@ -56,5 +56,8 @@ sp.visualizefilteredsignals;
 % sp.visualizeintegrationindices;
 %%
 % sp.visualizeintegratedsignals("plot", "real");
+sp.configure("processingAlgorithm", 1, "seedShuffle", 1, "numberOfTrials", 1000, 'numberOfTrialsParallel', 2);
 sp.visualizeintegratedsignals("plot", "magnitude");
 % sp.visualizeestimation;
+%%
+% [PD, PFA] = sp.simulatedetection;

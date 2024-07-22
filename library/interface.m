@@ -7,7 +7,6 @@ classdef interface < handle
         targets (1, 1) target = target;
         environment (1, 1) %%%%% not implemented
         configuration (1, 1) struct = struct('noise', false, 'directPath', false)
-        monteCarlo (1, 1) struct = struct('seed', 0, 'numberOfTrials', 1)
     end
 
     properties (Dependent)
@@ -65,10 +64,6 @@ classdef interface < handle
         numberOfBistaticPairs (1, 1) double {mustBeInteger, mustBeNonnegative} % Nrx*Ntx
     end
 
-    properties (Access = private)
-        seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(seedShuffle, [0, 1])}
-    end
-
     properties (Constant)
         speedOfLight (1, 1) double {mustBePositive} = physconst('LightSpeed');
     end
@@ -99,7 +94,6 @@ classdef interface < handle
 
         function Pr = get.receivedPowerFromScatterers_dBW(obj)
             % (Ntx x Nrx x Nt matrix)
-            rng(obj.monteCarlo.seed);
             powerGains = 10*log10([obj.network.activeTransmittingNodes.inputPower_W].') + permute(obj.targets.RCS_dbms, [1 3 2]) ...
             + 20*log10([obj.network.activeTransmittingNodes.carrierWavelength].');
             powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
@@ -355,15 +349,6 @@ classdef interface < handle
             N = obj.network.numberOfActiveBistaticPairs;
         end
 
-        function mc = get.monteCarlo(obj)
-            mc.numberOfTrials = obj.monteCarlo.numberOfTrials;
-            if obj.seedShuffle
-                mc.seed = 'shuffle';
-            else
-                mc.seed = obj.monteCarlo.seed;
-            end
-        end
-
         %%% configuration
 
         function configure(obj, options)
@@ -374,18 +359,6 @@ classdef interface < handle
             end
             obj.configuration.noise = options.noise;
             obj.configuration.directPath = options.directPath;
-        end
-
-        function configureMonteCarlo(obj, options)
-            arguments
-                obj
-                options.numberOfTrials (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrials
-                options.seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.seedShuffle, [0, 1])} = obj.seedShuffle
-                options.seed (1, 1) {mustBeNonnegative, mustBeInteger, mustBeLessThan(options.seed, 4294967296)} = 0
-            end
-            obj.monteCarlo.numberOfTrials = options.numberOfTrials;
-            obj.seedShuffle = options.seedShuffle;
-            obj.monteCarlo.seed = options.seed;
         end
 
         %%% visualization methods
