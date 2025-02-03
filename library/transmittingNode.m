@@ -3,6 +3,7 @@ classdef transmittingNode < handle & dynamicprops
     %   Detailed explanation goes here
 
     properties (SetAccess = private, GetAccess = public)
+        array planarArray {mustBeScalarOrEmpty} = planarArray.empty()
         position (3, 1) double = zeros(3, 1)
         inputPower_W (1, 1) double {mustBePositive} = 1e3 % Watt
     end
@@ -18,6 +19,13 @@ classdef transmittingNode < handle & dynamicprops
 
     properties (Dependent)
         carrierWavelength (1, 1) double {mustBeNonnegative} % m
+        peakTransmitGain (1, 1) double {mustBeNonnegative} % power scale
+    end
+
+    properties (Dependent)
+        steeringVector (:, 1) double
+        beamformer (:, 1) double
+        beamformingGain_dB (1, 1) double {mustBeNonnegative} % dB
     end
 
     properties (SetAccess = private, GetAccess = public)
@@ -34,10 +42,12 @@ classdef transmittingNode < handle & dynamicprops
 
     properties (SetAccess = private, GetAccess = public)
         modulationType (1, 1) string {mustBeMember(modulationType, ["unmodulated", "linearFrequencyModulated"])} = "unmodulated"
-        taperType (1, 1) string {mustBeMember(taperType, ["rectwin", "hann", "hamming"])} = "rectwin"
+        taperTypeFastTime (1, 1) string {mustBeMember(taperTypeFastTime, ["rectwin", "hann", "hamming"])} = "rectwin"
+        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "taylorwin"
     end
 
     properties (Dependent)
+        taperSpatial (:, 1) double
         waveform (1, 1) function_handle
     end
 
@@ -53,13 +63,14 @@ classdef transmittingNode < handle & dynamicprops
         function obj = transmittingNode(options)
             arguments
                 options.position (3, :) double = zeros(3, 1)
+                options.array (1, 1) planarArray = planarArray
                 options.inputPower_W (1, :) double {mustBePositive} = 1e3 % Watt
                 options.carrierFrequency (1, :) double {mustBePositive} = 1e9 % Hz
                 options.pulseWidth (1, :) double {mustBeNonnegative} = 1e-6 % sec
             end
             %transmittingNode Construct an instance of this class
             %   Detailed explanation goes here
-            numberOfNodes = max([size(options.position, 2), numel(options.inputPower_W), numel(options.carrierFrequency), ...
+            numberOfNodes = max([size(options.position, 2), numel(options.array), numel(options.inputPower_W), numel(options.carrierFrequency), ...
                 numel(options.pulseWidth)]);
             if numberOfNodes == 1
                 obj.position = options.position;
@@ -67,13 +78,24 @@ classdef transmittingNode < handle & dynamicprops
                 obj.carrierFrequency = options.carrierFrequency;
                 obj.pulseWidth = options.pulseWidth;
                 obj.setunmodulation;
+                if isempty(options.array.node)
+                    obj.array = options.array;
+                else
+                    obj.array = planarArray( ...
+                        "numberOfElements", options.array.numberOfElements, ...
+                        "spacing", options.array.spacing, ...
+                        "rpm", options.array.rpm, ...
+                        "scanDirection", options.array.scanDirection, ...
+                        "backOfArray", options.array.backOfArray);
+                end
+                obj.array.node = obj;
             else
                 if size(options.position, 2) == 1
                     options.position = repmat(options.position, 1, numberOfNodes);
                 elseif size(options.position, 2) ~= numberOfNodes
                     error('number of transmitting nodes is %d', numberOfNodes);
                 end
-                for fieldName = ["inputPower_W", "carrierFrequency", "pulseWidth"]
+                for fieldName = ["array", "inputPower_W", "carrierFrequency", "pulseWidth"]
                     if isscalar(options.(fieldName))
                         options.(fieldName) = repmat(options.(fieldName), 1, numberOfNodes);
                     elseif numel(options.(fieldName)) ~= numberOfNodes
@@ -84,6 +106,7 @@ classdef transmittingNode < handle & dynamicprops
                 for nodeID = 1 : numberOfNodes
                     obj(nodeID) = transmittingNode( ...
                         'position', options.position(:, nodeID), ...
+                        'array', options.array(nodeID), ...
                         'inputPower_W', options.inputPower_W(nodeID), ...
                         'carrierFrequency', options.carrierFrequency(nodeID), ...
                         'pulseWidth', options.pulseWidth(nodeID));
@@ -109,8 +132,24 @@ classdef transmittingNode < handle & dynamicprops
             lambda = obj.speedOfLight/obj.carrierFrequency;
         end
 
+        function Gt = get.peakTransmitGain(obj)
+            Gt = 4*pi*obj.array.apertureArea./obj.carrierWavelength.^2;
+        end
+
+        function a = get.steeringVector(obj)
+            a = exp(1j*2*pi*obj.array.steeringPositions./obj.carrierWavelength);
+        end
+
+        function h = get.beamformer(obj)
+            h = obj.taperSpatial.*obj.steeringVector;
+        end
+
+        function G = get.beamformingGain_dB(obj)
+            G = 20*log10(sum(obj.taperSpatial));
+        end
+
         function pri = get.PRI(obj)
-            pri = obj.pulseWidth.*obj.dutyCycle;
+            pri = obj.pulseWidth./obj.dutyCycle;
         end
 
         function prf = get.PRF(obj)
@@ -119,6 +158,12 @@ classdef transmittingNode < handle & dynamicprops
 
         function t = get.beamTime(obj)
             t = obj.PRI.*obj.numberOfPulses;
+        end
+
+        function T = get.taperSpatial(obj)
+            funcTaper = eval("@" + obj.taperTypeSpatial);
+            T = funcTaper(obj.array.numberOfTotalElements);
+            T = T./norm(T);
         end
 
         function s = get.waveform(obj)
@@ -131,27 +176,44 @@ classdef transmittingNode < handle & dynamicprops
             end
             switch obj.modulationType % complex modulation waveforms
                 case "unmodulated"
-                    s = @(t) obj.taperSamples(t).*r(t);
+                    s = @(t) obj.taperFastTimeSamples(t).*r(t);
                 case "linearFrequencyModulated"
-                    switch obj.frequencyDirection
-                        case "increasing"
-                            s = @(t) obj.taperSamples(t).*r(t).*exp(1j*pi*(obj.bandWidth/obj.pulseWidth)*(t + obj.pulseWidth).^2 + 1j*2*pi*obj.frequencyOffset*(t + obj.pulseWidth));
-                        case "decreasing"
-                            s = @(t) obj.taperSamples(t).*r(t).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*t.^2 + 1j*2*pi*obj.frequencyOffset.*t);
-                    end
+                    s = @(t) LFM(t);
+            end
+            function sig = LFM(t)
+                sig = zeros(size(t));
+                finiteInstants = ~isinf(t);
+                t = t(finiteInstants);
+                switch obj.frequencyDirection
+                    case "increasing"
+                        sig(finiteInstants) = obj.taperFastTimeSamples(t).*r(t).*exp(1j*pi*(obj.bandWidth/obj.pulseWidth)*(t + obj.pulseWidth).^2 + 1j*2*pi*obj.frequencyOffset*(t + obj.pulseWidth));
+                    case "decreasing"
+                        sig(finiteInstants) = obj.taperFastTimeSamples(t).*r(t).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*t.^2 + 1j*2*pi*obj.frequencyOffset.*t);
+                end
             end
         end
 
-        function T = taperSamples(obj, samplingInstants)
+        function T = taperFastTimeSamples(obj, samplingInstants)
             pulseInstants = samplingInstants <= 0 & samplingInstants > -permute([obj.pulseWidth], [1 4 3 2]);
-            numberOfReceiverNodes = size(samplingInstants, 2);
-            numberOfTransmitterNodes = numel(obj);
-            T = zeros(size(samplingInstants, 1), numberOfReceiverNodes, 1, numberOfTransmitterNodes);
-            for rxID = 1 : numberOfReceiverNodes
-                for txID = 1: numberOfTransmitterNodes
-                    T(pulseInstants(:, rxID, 1, txID), rxID, 1, txID) = eval(obj(txID).taperType + "(sum(pulseInstants(:, rxID, 1, txID)))");
+            numberOfReceivingNodes = size(samplingInstants, 2);
+            numberOfTransmittingNodes = numel(obj);
+            numberOfTargets = size(samplingInstants, 3);
+            T = zeros(size(samplingInstants, 1), numberOfTargets, numberOfReceivingNodes, numberOfTransmittingNodes);
+            for rxID = 1 : numberOfReceivingNodes
+                for txID = 1: numberOfTransmittingNodes
+                    switch obj(txID).taperTypeFastTime
+                        case "rectwin"
+                            T = 1;
+                        otherwise
+                            targetInstants = any(pulseInstants(:, rxID, :, txID), 1);
+                            t = eval(obj(txID).taperTypeFastTime + "(max(sum(pulseInstants(:, rxID, :, txID))))");
+                            K = size(samplingInstants, 1)*numberOfTargets;
+                            idx = find(pulseInstants(:, rxID, targetInstants, txID)) + (rxID - 1)*K + (txID - 1)*(rxID - 1)*K;
+                            T(idx) = repmat(t, sum(targetInstants), 1);
+                    end
                 end
             end
+            T = permute(T, [1 3 2 4]);
         end
 
         %%% set methods
@@ -159,16 +221,23 @@ classdef transmittingNode < handle & dynamicprops
         function settaper(obj, options)
             arguments
                 obj
-                options.taperType (1, :) string {mustBeMember(options.taperType, ["rectwin", "hann", "hamming"])} = "rectwin"
+                options.taperTypeFastTime (1, :) string {mustBeMember(options.taperTypeFastTime, ["rectwin", "hann", "hamming"])} = "rectwin"
+                options.taperTypeSpatial (1, :) string {mustBeMember(options.taperTypeSpatial, ["rectwin", "hann", "hamming"])} = "rectwin"
             end
             numberOfTransmittingNodes = numel(obj);
-            if isscalar(options.taperType)
-                options.taperType = repmat(options.taperType, 1, numberOfTransmittingNodes);
-            elseif numel(options.taperType) ~= numberOfTransmittingNodes
-                error('taperType vector must have a size of either %d or %d', numberOfTransmittingNodes, 1);
+            if isscalar(options.taperTypeFastTime)
+                options.taperTypeFastTime = repmat(options.taperTypeFastTime, 1, numberOfTransmittingNodes);
+            elseif numel(options.taperTypeFastTime) ~= numberOfTransmittingNodes
+                error('taperTypeFastTime vector must have a size of either %d or %d', numberOfTransmittingNodes, 1);
+            end
+            if isscalar(options.taperTypeSpatial)
+                options.taperTypeSpatial = repmat(options.taperTypeSpatial, 1, numberOfTransmittingNodes);
+            elseif numel(options.taperTypeSpatial) ~= numberOfTransmittingNodes
+                error('taperTypeSpatial vector must have a size of either %d or %d', numberOfTransmittingNodes, 1);
             end
             for txID = 1 : numberOfTransmittingNodes
-                obj(txID).taperType = options.taperType(txID);
+                obj(txID).taperTypeFastTime = options.taperTypeFastTime(txID);
+                obj(txID).taperTypeSpatial = options.taperTypeSpatial(txID);
             end
         end
 

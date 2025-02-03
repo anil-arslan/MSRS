@@ -19,8 +19,8 @@ network = radarNetwork( ...
 % network.visualizenetwork;
 % network.visualizewaveformsampled("axisAmbiguity", "3D");
 targets = target( ...
-    'position', [300; -300; 0], ...
-    'meanRCS_dbms', -inf);
+    'position', [-318.96229; -310.96229; 0], ...
+    'meanRCS_dbms', -10);
 % targets = target( ...
 %     'position', [d/4; -d/8; d/4], ...
 %     'meanRCS_dbms', 1e3);
@@ -34,8 +34,15 @@ sp.setintegrationindices;
 % sp.visualizeintegrationindices;
 %%
 % transmitters.settaper("taperType", "rectwin");
-int.configure('noise', 1, 'directPath', 0);
-sp.configure("PFA", 1e-2);
+int.configure( ...
+    'noise', 1, ...
+    'spatialCoherency', 'incoherent');
+sp.configure( ...
+    "PFA", 1e-3, ...
+    "processingAlgorithm", 6, ...
+    "seedShuffle", 1, ...
+    "numberOfTrials", 200, ...
+    'numberOfTrialsParallel', 200);
 %%
 % int.visualizescenario;
 int.visualizereceivedsignals;
@@ -44,8 +51,13 @@ sp.visualizefilteredsignals;
 % sp.visualizeintegrationindices;
 %%
 % sp.visualizeintegratedsignals("plot", "real");
-sp.configure("processingAlgorithm", 1, "seedShuffle", 1, "numberOfTrials", 1, 'numberOfTrialsParallel', 1);
-sp.visualizeintegratedsignals("plot", "magnitude");
+% sp.setmatchfilteredsignals;
+sp.visualizeintegratedsignals;
 % sp.visualizeestimation;
 %%
-% [PD, PFA] = sp.simulatedetection;
+[PD, PFA] = sp.simulatedetection;
+%%
+% sp.visualizereceiveroperatingcharacteristics;
+% sp.visualizedetectioncharacteristics;
+% sp.visualizedetectioncharacteristics("PFA", 1e-3);
+% sp.visualizereceiveroperatingcharacteristics("scanAlgorithms", 1, "snr_dB", 10);

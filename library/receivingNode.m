@@ -3,13 +3,27 @@ classdef receivingNode < handle
     %   Detailed explanation goes here
 
     properties (SetAccess = private, GetAccess = public)
+        array planarArray {mustBeScalarOrEmpty} = planarArray.empty()
         position (3, 1) double = zeros(3, 1)
         systemLoss_dB (1, 1) double {mustBeNonnegative} = 0 % dB
         noiseFigure_dB (1, 1) double {mustBeNonnegative} = 0 % dB
         temperature (1, 1) double {mustBeNonnegative} = 300 % Kelvin
     end
 
+    properties (SetAccess = private, GetAccess = public)
+        beamCentersElevation (1, :) double {mustBeInRange(beamCentersElevation, -90, 90)} = 0
+        beamCentersAzimuth (1, :) double {mustBeInRange(beamCentersAzimuth, -180, 180)} = 0
+        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "taylorwin"
+    end
+
     properties (Dependent)
+        taperSpatial (:, 1) double
+        beamformer double % M x Nch matrix
+        beamformingGain_dB (1, 1) double {mustBeNonnegative} % dB
+        beamCenterUnitVector (2, :) double
+        beamCenterUnitDirection (3, :) double
+        beamCenterPositions double
+        numberOfTotalChannels {mustBeInteger, mustBePositive}
         noisePowerPerSample_dB (1, 1) double % dB watt
     end
 
@@ -31,6 +45,15 @@ classdef receivingNode < handle
         numberOfSamplesPerCPI (1, 1) double {mustBeInteger, mustBeNonnegative} % during CPI
     end
 
+    properties (GetAccess = public, SetAccess = ?radarNetwork)
+        directionFinder struct = struct( ...
+            'table', [], ...
+            'elevation', [], ...
+            'azimuth', [], ...
+            'azimuthResolution', [], ...
+            'elevationResolution', [])
+    end
+
     properties (Constant)
         speedOfLight (1, 1) double {mustBePositive} = physconst('LightSpeed');
         constantBoltzmann (1, 1) double {mustBePositive} = physconst('Boltzmann');
@@ -40,6 +63,7 @@ classdef receivingNode < handle
         function obj = receivingNode(options)
             arguments
                 options.position (3, :) double = zeros(3, 1)
+                options.array (1, :) planarArray = planarArray
                 options.systemLoss (1, :) double {mustBeNonnegative} = 0 % dB
                 options.samplingFrequency (1, :) double {mustBeNonnegative} = 4e7 % Hz
                 options.temperature (1, :) double {mustBeNonnegative} = 300 % Kelvin
@@ -48,7 +72,7 @@ classdef receivingNode < handle
             end
             %receivingNode Construct an instance of this class
             %   Detailed explanation goes here
-            numberOfNodes = max([size(options.position, 2), numel(options.systemLoss), numel(options.samplingFrequency), ...
+            numberOfNodes = max([size(options.position, 2), numel(options.array), numel(options.systemLoss), numel(options.samplingFrequency), ...
                 numel(options.temperature), numel(options.noiseFigure), numel(options.CPIsecond)]);
             if numberOfNodes == 1
                 obj.position = options.position;
@@ -57,13 +81,24 @@ classdef receivingNode < handle
                 obj.temperature = options.temperature;
                 obj.noiseFigure_dB = options.noiseFigure;
                 obj.CPI = options.CPIsecond;
+                if isempty(options.array.node)
+                    obj.array = options.array;
+                else
+                    obj.array = planarArray( ...
+                        "numberOfElements", options.array.numberOfElements, ...
+                        "spacing", options.array.spacing, ...
+                        "rpm", options.array.rpm, ...
+                        "scanDirection", options.array.scanDirection, ...
+                        "backOfArray", options.array.backOfArray);
+                end
+                obj.array.node = obj;
             else
                 if size(options.position, 2) == 1
                     options.position = repmat(options.position, 1, numberOfNodes);
                 elseif size(options.position, 2) ~= numberOfNodes
                     error('number of receiving nodes is %d', numberOfNodes);
                 end
-                for field = ["systemLoss", "samplingFrequency", "temperature", "noiseFigure", "CPIsecond"]
+                for field = ["array", "systemLoss", "samplingFrequency", "temperature", "noiseFigure", "CPIsecond"]
                     if isscalar(options.(field))
                         options.(field) = repmat(options.(field), 1, numberOfNodes);
                     elseif size(options.(field), 2) ~= numberOfNodes
@@ -74,6 +109,7 @@ classdef receivingNode < handle
                 for nodeID = 1 : numberOfNodes
                     obj(nodeID) = receivingNode( ...
                         'position', options.position(:, nodeID), ...
+                        'array', options.array(nodeID), ...
                         'systemLoss', options.systemLoss(nodeID), ...
                         'samplingFrequency', options.samplingFrequency(nodeID), ...
                         'temperature', options.temperature(nodeID), ...
@@ -81,6 +117,36 @@ classdef receivingNode < handle
                         'CPIsecond', options.CPIsecond(nodeID));
                 end
             end
+        end
+
+        function T = get.taperSpatial(obj)
+            funcTaper = eval("@" + obj.taperTypeSpatial);
+            T = funcTaper(obj.array.numberOfTotalElements);
+            T = T./norm(T);
+        end
+
+        function H = get.beamformer(obj)
+            H = obj.taperSpatial;
+        end
+
+        function G = get.beamformingGain_dB(obj)
+            G = 20*log10(sum(obj.taperSpatial));
+        end
+
+        function g = get.beamCenterUnitVector(obj)
+            g = [cosd(obj.beamCentersElevation).*sind(obj.beamCentersAzimuth); sind(obj.beamCentersElevation)];
+        end
+
+        function g = get.beamCenterUnitDirection(obj)
+            g = obj.array.rotationMatrix*[cosd(obj.beamCentersElevation).*cosd(obj.beamCentersAzimuth); cosd(obj.beamCentersElevation).*sind(obj.beamCentersAzimuth); sind(obj.beamCentersElevation)];
+        end
+
+        function p = get.beamCenterPositions(obj)
+            p = obj.array.positionsYZ.'*obj.beamCenterUnitVector;
+        end
+
+        function Nch = get.numberOfTotalChannels(obj)
+            Nch = numel(obj.beamCentersElevation);
         end
 
         function Pn = get.noisePowerPerSample_dB(obj)
@@ -101,6 +167,52 @@ classdef receivingNode < handle
 
         function N = get.numberOfSamplesPerCPI(obj)
             N = round(obj.CPI.*obj.samplingFrequency);
+        end
+
+        %%% set methods
+
+        function setbeamcenters(obj,options)
+            arguments
+                obj
+                options.beamCentersElevation (1, :) = {obj.beamCentersElevation}
+                options.beamCentersAzimuth (1, :) = {obj.beamCentersAzimuth}
+            end
+            numberOfReceivingNodes = numel(obj);
+            for rxID = 1 : numberOfReceivingNodes
+                if iscell(options.beamCentersElevation)
+                    obj(rxID).beamCentersElevation = options.beamCentersElevation{rxID};
+                else
+                    obj(rxID).beamCentersElevation = options.beamCentersElevation;
+                end
+                if iscell(options.beamCentersAzimuth)
+                    obj(rxID).beamCentersAzimuth = options.beamCentersAzimuth{rxID};
+                else
+                    obj(rxID).beamCentersAzimuth = options.beamCentersAzimuth;
+                end
+                if isscalar(obj(rxID).beamCentersElevation) && ~isscalar(obj(rxID).beamCentersAzimuth)
+                    obj(rxID).beamCentersElevation = repmat(obj(rxID).beamCentersElevation, 1, length(obj(rxID).beamCentersAzimuth));
+                elseif isscalar(obj(rxID).beamCentersAzimuth) && ~isscalar(obj(rxID).beamCentersElevation)
+                    obj(rxID).beamCentersAzimuth = repmat(obj(rxID).beamCentersAzimuth, 1, length(obj(rxID).beamCentersElevation));
+                elseif length(obj(rxID).beamCentersAzimuth) ~= length(obj(rxID).beamCentersElevation)
+                    error('length of beam elevation and azimuth centers must be the same');
+                end
+            end
+        end
+
+        function settaper(obj, options)
+            arguments
+                obj
+                options.taperTypeSpatial (1, :) string {mustBeMember(options.taperTypeSpatial, ["rectwin", "hann", "hamming"])} = "rectwin"
+            end
+            numberOfReceivingNodes = numel(obj);
+            if isscalar(options.taperTypeSpatial)
+                options.taperTypeSpatial = repmat(options.taperTypeSpatial, 1, numberOfReceivingNodes);
+            elseif numel(options.taperTypeSpatial) ~= numberOfReceivingNodes
+                error('taperTypeSpatial vector must have a size of either %d or %d', numberOfReceivingNodes, 1);
+            end
+            for rxID = 1 : numberOfReceivingNodes
+                obj(rxID).taperTypeSpatial = options.taperTypeSpatial(rxID);
+            end
         end
     end
 end

@@ -4,6 +4,13 @@ classdef target < handle
 
     properties (SetAccess = private, GetAccess = public)
         position (3, :) double = zeros(3, 1) % meters
+    end
+
+    properties (Dependent)
+        positionsfluctuating (3, :, :) double % (3 x Nt x Nmcp) meters
+    end
+
+    properties (SetAccess = private, GetAccess = public)
         velocity (3, :) double = zeros(3, 1) % meters per second
         meanRCS_dbms (1, :) double = 0 % dB of meter squares
         swerling (1, 1) double {mustBeInteger, mustBeMember(swerling, 0 : 4)} = 0
@@ -20,6 +27,7 @@ classdef target < handle
         x (1, :) double = nan
         y (1, :) double = nan
         z (1, :) double = nan
+        durationSimulation (1, 1) {mustBeNonnegative} = 0
     end
 
     properties (Dependent, GetAccess = ?interface, SetAccess = private)
@@ -117,9 +125,15 @@ classdef target < handle
         function step(obj, timeStep)
             arguments
                 obj
-                timeStep (1, 1) double {mustBePositive} = 1e-3 % seconds
+                timeStep (1, 1) double {mustBeNonnegative} % seconds
             end
             obj.position = obj.position + timeStep*obj.velocity;
+            obj.durationSimulation = obj.durationSimulation + timeStep;
+        end
+
+        function reset(obj)
+            obj.position = obj.position - obj.durationSimulation*obj.velocity;
+            obj.durationSimulation = 0;
         end
 
         function visualizetargets(obj)
