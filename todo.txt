@@ -1,0 +1,34 @@
+std fs/10 time senkronizasyon hatasi
+
+CURRENT
+
+Critical to do list
+    transmitter and receiver phase/time/frequency shift/synchronization
+    element pattern e.g. 120°
+    monostatic multichannel debug.
+    multistatic multichannel debug.
+    multi TX de different transmitted power
+    compressive sensing CFAR
+    tek sample bandwidth sinc ile model reconstruction theory?
+    resolution cell calculation, possible neighbours, cramer rao
+    setintegrationindices neighbour table.
+    TX seperation = time/frequency/waveform
+    monostatic different frequency = FDA ?
+    monostatic different waveform = MIMO ?
+    Multi monostatic plot fusion
+    Multi pulse.
+    ghost target, mainlobe, tapering, fine sampling etc.
+
+Extra
+    integrated signal include pattern
+    multistatic coherent processing relative phase and amplitude difference
+    integration weights other processing algorithms (for L6 not important)
+    BP, lsqr lasso, group lasso, fused lasso, adaptive lasso, prior lasso
+    stagewise OMP, generalized OMP, multipath matching pursuit, elastic net
+    modeling of demodulation of carrier frequency
+
+DONE
+    Baseband processing added.
+        It is assumed that superposed transmitted signals are resolved at receivers by their distinct carrier frequencies.
+    Multi monostatic (it can be discussed)
+    sinc based straddle loss

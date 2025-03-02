@@ -1,0 +1,50 @@
+Check list °
+    threshold
+    setdictionary
+    signalsCompressedTrials
+    hypothesizedInterface
+    hypothesisTestingResults
+    estimatedPositions
+        onemli
+
+    ROC
+    outputSNR_lin
+        bunlar signal processingde kullanilmiyor sadece dogrulama yapmak icin
+
+    signalsMatchFilteredTrials
+    signalsIntegrated
+    detectionFromMatchFiltration monostatic icin
+    detectionFromIntegration
+        compressive sensing e gecildigi icin onemi azaldi
+
+    thresholdCFAR
+        matched filter sinyalden hesaplandigi icin onemi azaldi
+        compressive sensingte adaptive threshold implement edilebilir belki
+
+    signalsIntegratedDirectly
+        computationally heavy oldugu icin onemi azaldi
+
+    integrationWeights
+    hypothesizedPhases
+        diger algoritmalar icin
+
+    positionError
+    positionErrorTotal
+        tasarimlar bittiginde ayaga kaldirilmali tekrardan
+
+    simulatedetection
+    simulatecoverage
+    startsimulation
+
+    visualizedictionary
+    visualizehypothesizedtimedelays
+    visualizecoveragesimulation
+    visualizecompression
+    visualizeestimation
+    visualizereceiveroperatingcharacteristics
+    visualizedetectioncharacteristics
+
+    visualizefilteredsignals
+    visualizeintegrationindices
+    visualizeintegratedsignals
+    visualizedirectlyintegratedsignals

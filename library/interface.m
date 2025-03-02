@@ -420,7 +420,7 @@ classdef interface < handle
             end
             fd = permute(obj.dopplerShift, [5 2 3 1 4]); % 1 x Nrx x Nt x Ntx matrix
             switch obj.network.carrierMode
-                case "bandPassProcessing" % transmitted signals perfectly resolved in carrier frequency
+                case 'bandPassProcessing' % transmitted signals perfectly resolved in carrier frequency
                 otherwise
                     % fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -2); % 1 x 1 x 1 x Ntx vector
                     % modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Nt x Ntx x Nmcp matrix
@@ -431,6 +431,24 @@ classdef interface < handle
             end
             waveforms = waveforms.*exp(-1j*2*pi*fd.*tau);
             waveforms(isinf(tau)) = 0;
+
+            switch obj.network.fractionalDelayMode
+                case 'sinc-based'
+                    notAlignedSampling = tau(1, :, :, :, :).*[obj.network.activeReceivingNodes.samplingFrequency];
+                    notAlignedSampling = notAlignedSampling - round(notAlignedSampling);
+        
+                    % Sinc-based fractional delay filter
+                    N = 10;  % Number of neighboring samples to consider
+                    n = (-N : N).';  % Filter taps
+                    h = sinc(n - notAlignedSampling);  % Fractional delay filter
+        
+                    % Create sampled signal and apply delay filter
+                    for waveformID = 1 : prod(size(waveforms, [2 3 4 5]))
+                        waveforms(:, waveformID) = conv(waveforms(:, waveformID), h(:, waveformID), 'same');  % Apply fractional delay filter
+                    end
+                case 'lagrange-based'
+                case 'off'
+            end
         end
 
         function waveforms = get.waveformReceivedFromTransmitters(obj)
@@ -440,7 +458,7 @@ classdef interface < handle
                 %%% not implemented
             end
             switch obj.network.carrierMode
-                case "bandPassProcessing" % transmitted signals perfectly resolved in carrier frequency
+                case 'bandPassProcessing' % transmitted signals perfectly resolved in carrier frequency
                 otherwise
                     % fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1); % 1 x 1 x Ntx vector
                     % modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Ntx matrix
@@ -448,6 +466,24 @@ classdef interface < handle
             waveforms = zeros(size(tau)); % Ns x Nrx x Ntx matrix
             for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                 waveforms(:, :, txID) = obj.network.activeTransmittingNodes(txID).waveform(tau(:, :, txID));
+            end
+
+            switch obj.network.fractionalDelayMode
+                case 'sinc-based'
+                    notAlignedSampling = tau(1, :, :, :, :).*[obj.network.activeReceivingNodes.samplingFrequency];
+                    notAlignedSampling = notAlignedSampling - round(notAlignedSampling);
+        
+                    % Sinc-based fractional delay filter
+                    N = 10;  % Number of neighboring samples to consider
+                    n = (-N : N).';  % Filter taps
+                    h = sinc(n - notAlignedSampling);  % Fractional delay filter
+        
+                    % Create sampled signal and apply delay filter
+                    for waveformID = 1 : prod(size(waveforms, [2 3 4 5]))
+                        waveforms(:, waveformID) = conv(waveforms(:, waveformID), h(:, waveformID), 'same');  % Apply fractional delay filter
+                    end
+                case 'lagrange-based'
+                case 'off'
             end
         end
 

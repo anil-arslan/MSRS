@@ -10,6 +10,7 @@ classdef radarNetwork < handle
         networkCoherency (1, 1) string {mustBeMember(networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = "coherent"
         carrierMode (1, 1) string {mustBeMember(carrierMode, "bandPassProcessing")} = "bandPassProcessing"
             % bandPassProcessing: transmitted signals perfectly resolved in carrier frequency
+        fractionalDelayMode (1, 1) string {mustBeMember(fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = "off"
         networkMode (1, 1) string {mustBeMember(networkMode, ["multiStatic", "monoStatic"])} = "multiStatic"
         surveillanceMode (1, 1) string {mustBeMember(surveillanceMode, ["rotating", "electronicScan", "staticBeam", "custom"])} = "custom"
         beamTime (1, 1) double {mustBeNonnegative} % sec
@@ -449,11 +450,13 @@ classdef radarNetwork < handle
                 obj
                 options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = obj.networkCoherency
                 options.carrierMode (1, 1) string {mustBeMember(options.carrierMode, "bandPassProcessing")} = obj.carrierMode
+                options.fractionalDelayMode (1, 1) string {mustBeMember(options.fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = obj.fractionalDelayMode
                 options.networkMode (1, 1) string {mustBeMember(options.networkMode, ["multiStatic", "monoStatic"])} = obj.networkMode
                 options.beamTime (1, 1) double {mustBeNonnegative} = obj.beamTime % sec
             end
             obj.networkCoherency = options.networkCoherency;
             obj.carrierMode = options.carrierMode;
+            obj.fractionalDelayMode = options.fractionalDelayMode;
             obj.networkMode = options.networkMode;
             if strcmpi(obj.networkMode, "monoStatic")
                 obj.receivingNodeActivity = obj.receivingNodeActivity & ~isnan(obj.monoStaticTransmitterIDs);
