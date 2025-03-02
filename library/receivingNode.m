@@ -3,6 +3,7 @@ classdef receivingNode < handle
     %   Detailed explanation goes here
 
     properties (SetAccess = private, GetAccess = public)
+        beamformingMode (1, 1) string {mustBeMember(beamformingMode, ["conventional", "bypass"])} = "conventional"
         array planarArray {mustBeScalarOrEmpty} = planarArray.empty()
         position (3, 1) double = zeros(3, 1)
         systemLoss_dB (1, 1) double {mustBeNonnegative} = 0 % dB
@@ -130,7 +131,12 @@ classdef receivingNode < handle
         end
 
         function G = get.beamformingGain_dB(obj)
-            G = 20*log10(sum(obj.taperSpatial));
+            switch obj.beamformingMode
+                case 'conventional'
+                    G = 20*log10(sum(obj.taperSpatial, 1));
+                case 'bypass'
+                    G = 10*log10([obj.array.numberOfTotalElements].');
+            end
         end
 
         function g = get.beamCenterUnitVector(obj)
@@ -146,7 +152,12 @@ classdef receivingNode < handle
         end
 
         function Nch = get.numberOfTotalChannels(obj)
-            Nch = numel(obj.beamCentersElevation);
+            switch obj.beamformingMode
+                case 'conventional'
+                    Nch = numel(obj.beamCentersElevation);
+                case 'bypass'
+                    Nch = obj.array.numberOfTotalElements;
+            end
         end
 
         function Pn = get.noisePowerPerSample_dB(obj)
@@ -212,6 +223,35 @@ classdef receivingNode < handle
             end
             for rxID = 1 : numberOfReceivingNodes
                 obj(rxID).taperTypeSpatial = options.taperTypeSpatial(rxID);
+            end
+        end
+
+        function settingsreceiver(obj, options)
+            arguments
+                obj
+                options.beamformingMode (1, 1) string {mustBeMember(options.beamformingMode, ["conventional", "bypass"])} = obj.beamformingMode
+            end
+            numberOfReceivingNodes = numel(obj);
+            if isscalar(options.beamformingMode)
+                options.beamformingMode = repmat(options.beamformingMode, 1, numberOfReceivingNodes);
+            elseif numel(options.beamformingMode) ~= numberOfReceivingNodes
+                error('beamformingMode vector must have a size of either %d or %d', numberOfReceivingNodes, 1);
+            end
+            for rxID = 1 : numberOfReceivingNodes
+                obj(rxID).beamformingMode = options.beamformingMode(rxID);
+            end
+        end
+
+        %%% utility methods
+
+        function beamSpaceSignal = beamform(obj, elementSpaceSignal, wavelength)
+            switch obj.beamformingMode
+                case 'conventional'
+                    beamformingCenters = exp(1j*2*pi*obj.beamCenterPositions./wavelength);
+                    steeringVector = exp(1j*2*pi*obj.array.steeringPositions./wavelength);
+                    beamSpaceSignal = pagemtimes(elementSpaceSignal, conj(obj.beamformer.*beamformingCenters.*steeringVector));
+                case 'bypass'
+                    beamSpaceSignal = elementSpaceSignal;
             end
         end
     end

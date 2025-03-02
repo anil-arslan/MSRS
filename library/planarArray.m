@@ -129,15 +129,38 @@ classdef planarArray < handle
         function setorientation(obj, options)
             arguments
                 obj
-                options.roll (1, 1) double {mustBeInRange(options.roll, -90, 90)} = 0 % degrees
-                options.pitch (1, 1) double {mustBeInRange(options.pitch, -90, 90)} = 0 % degrees
-                options.yaw (1, 1) double {mustBeInRange(options.yaw, -180, 180)} = 0 % degrees
-                options.scanDirection (1, 1) string {mustBeMember(options.scanDirection, ["cw", "ccw"])} = obj.scanDirection
+                options.roll (1, :) double {mustBeInRange(options.roll, -90, 90)} = [obj.roll] % degrees
+                options.pitch (1, :) double {mustBeInRange(options.pitch, -90, 90)} = [obj.pitch] % degrees
+                options.yaw (1, :) double {mustBeInRange(options.yaw, -180, 180)} = [obj.yaw] % degrees
+                options.scanDirection (1, :) string {mustBeMember(options.scanDirection, ["cw", "ccw"])} = [obj.scanDirection]
             end
-            obj.roll = options.roll;
-            obj.pitch = options.pitch;
-            obj.yaw = options.yaw;
-            obj.scanDirection = options.scanDirection;
+            numberOfArrays = numel(obj);
+            if isscalar(options.roll)
+                options.roll = repmat(options.roll, 1, numberOfArrays);
+            elseif length(options.roll) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
+            if isscalar(options.pitch)
+                options.pitch = repmat(options.pitch, 1, numberOfArrays);
+            elseif length(options.pitch) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
+            if isscalar(options.yaw)
+                options.yaw = repmat(options.yaw, 1, numberOfArrays);
+            elseif length(options.yaw) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
+            if isscalar(options.scanDirection)
+                options.scanDirection = repmat(options.scanDirection, 1, numberOfArrays);
+            elseif length(options.scanDirection) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
+            for arrayID = 1 : numberOfArrays
+                obj(arrayID).roll = options.roll(arrayID);
+                obj(arrayID).pitch = options.pitch(arrayID);
+                obj(arrayID).yaw = options.yaw(arrayID);
+                obj(arrayID).scanDirection = options.scanDirection(arrayID);
+            end
         end
 
         function setscanparameters(obj, options)

@@ -6,14 +6,9 @@ classdef target < handle
         position (3, :) double = zeros(3, 1) % meters
     end
 
-    properties (Dependent)
-        positionsfluctuating (3, :, :) double % (3 x Nt x Nmcp) meters
-    end
-
     properties (SetAccess = private, GetAccess = public)
         velocity (3, :) double = zeros(3, 1) % meters per second
         meanRCS_dbms (1, :) double = 0 % dB of meter squares
-        swerling (1, 1) double {mustBeInteger, mustBeMember(swerling, 0 : 4)} = 0
     end
 
     properties (Dependent)
@@ -108,18 +103,7 @@ classdef target < handle
         end
 
         function rcs = get.RCS_dbms(obj)
-            switch obj.swerling
-                case 0
-                    rcs = obj.meanRCS_dbms;
-                case 1
-                    %%%%% not implemented %%%%%
-                case 2
-                    %%%%% not implemented %%%%%
-                case 3
-                    %%%%% not implemented %%%%%
-                case 4
-                    %%%%% not implemented %%%%%
-            end
+            rcs = obj.meanRCS_dbms;
         end
 
         function step(obj, timeStep)

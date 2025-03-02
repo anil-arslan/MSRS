@@ -8,13 +8,22 @@ classdef radarNetwork < handle
         receivingNodeActivity (1, :) logical = false % (1 x Nrx vector)
         transmittingNodeActivity (1, :) logical = false % (1 x Ntx vector)
         networkCoherency (1, 1) string {mustBeMember(networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = "coherent"
+        carrierMode (1, 1) string {mustBeMember(carrierMode, "bandPassProcessing")} = "bandPassProcessing"
+            % bandPassProcessing: transmitted signals perfectly resolved in carrier frequency
         networkMode (1, 1) string {mustBeMember(networkMode, ["multiStatic", "monoStatic"])} = "multiStatic"
         surveillanceMode (1, 1) string {mustBeMember(surveillanceMode, ["rotating", "electronicScan", "staticBeam", "custom"])} = "custom"
-        beamformingMode (1, 1) string {mustBeMember(beamformingMode, ["conventional", "bypass"])} = "conventional"
         beamTime (1, 1) double {mustBeNonnegative} % sec
+        timeOffsetBistaticPairs double = 0 % (Ntx x Nrx matrix)
+        timeDeviationBistaticPairs double {mustBeNonnegative} = 0 % (Ntx x Nrx matrix)
+        frequencyOffsetBistaticPairs double = 0 % (Ntx x 1 matrix)
+        frequencyDeviationBistaticPairs double {mustBeNonnegative} = 0 % (Ntx x 1 matrix)
     end
 
     properties (Dependent)
+        timeOffsetActiveBistaticPairs double % (Ntx x Nrx matrix)
+        timeDeviationActiveBistaticPairs double {mustBeNonnegative} % (Ntx x Nrx matrix)
+        frequencyOffsetActiveBistaticPairs double % (Ntx x Nrx matrix)
+        frequencyDeviationActiveBistaticPairs double {mustBeNonnegative} % (Ntx x Nrx matrix)
         numberOfNodes (1, 1) double {mustBeInteger, mustBeNonnegative}
         numberOfActiveNodes (1, 1) double {mustBeInteger, mustBeNonnegative}
         numberOfReceivingNodes (1, 1) double {mustBeInteger, mustBeNonnegative}
@@ -26,6 +35,7 @@ classdef radarNetwork < handle
         multiReceiver (1, 1) logical
         multiTransmitter (1, 1) logical
         passiveNetwork (1, 1) logical
+        numberOfParallelSignalFusions (1, 1) double {mustBeInteger, mustBeNonnegative}
         monoStaticTransmitterIDs (1, :) double {mustBeInteger, mustBeNonnegative} % (1 x Nrx vector)
         activeReceivingNodes (1, :) receivingNode % (1 x Nrx vector)
         activeTransmittingNodes (1, :) transmittingNode % (1 x Ntx vector)
@@ -100,9 +110,29 @@ classdef radarNetwork < handle
                 end
             end
             obj.beamTime = max([obj.receivingNodes.CPI]);
+            obj.timeOffsetBistaticPairs = zeros(obj.numberOfTransmittingNodes, obj.numberOfActiveReceivingNodes);
+            obj.timeDeviationBistaticPairs = zeros(obj.numberOfTransmittingNodes, obj.numberOfActiveReceivingNodes);
+            obj.frequencyOffsetBistaticPairs = zeros(obj.numberOfTransmittingNodes, 1);
+            obj.frequencyDeviationBistaticPairs = zeros(obj.numberOfTransmittingNodes, 1);
         end
 
         %%% get methods
+
+        function t = get.timeOffsetActiveBistaticPairs(obj)
+            t = obj.timeOffsetBistaticPairs(obj.transmittingNodeActivity, obj.receivingNodeActivity);
+        end
+
+        function t = get.timeDeviationActiveBistaticPairs(obj)
+            t = obj.timeDeviationBistaticPairs(obj.transmittingNodeActivity, obj.receivingNodeActivity);
+        end
+
+        function t = get.frequencyOffsetActiveBistaticPairs(obj)
+            t = obj.frequencyOffsetBistaticPairs(obj.transmittingNodeActivity, 1);
+        end
+
+        function t = get.frequencyDeviationActiveBistaticPairs(obj)
+            t = obj.frequencyDeviationBistaticPairs(obj.transmittingNodeActivity, 1);
+        end
 
         function N = get.numberOfNodes(obj)
             N = obj.numberOfReceivingNodes + obj.numberOfTransmittingNodes;
@@ -133,7 +163,12 @@ classdef radarNetwork < handle
         end
 
         function N = get.numberOfActiveBistaticPairs(obj)
-            N = obj.numberOfActiveReceivingNodes*obj.numberOfActiveTransmittingNodes;
+            switch obj.networkMode
+                case 'multiStatic'
+                    N = obj.numberOfActiveReceivingNodes*obj.numberOfActiveTransmittingNodes;
+                case 'monoStatic'
+                    N = 1;
+            end
         end
 
         function tf = get.multiReceiver(obj)
@@ -146,6 +181,15 @@ classdef radarNetwork < handle
 
         function tf = get.passiveNetwork(obj)
             tf = ~logical(obj.numberOfActiveTransmittingNodes);
+        end
+
+        function nfus = get.numberOfParallelSignalFusions(obj)
+            switch obj.networkMode
+                case 'multiStatic'
+                    nfus = 1;
+                case 'monoStatic'
+                    nfus = nnz(~isnan(obj.monoStaticTransmitterIDs));
+            end
         end
 
         function txID = get.monoStaticTransmitterIDs(obj)
@@ -186,21 +230,41 @@ classdef radarNetwork < handle
         end
 
         function origin = get.center(obj)
-            origin = mean([obj.activeTransmittingNodes.position, obj.activeReceivingNodes.position], 2);
+            switch obj.networkMode
+                case 'monoStatic'
+                    txIDs = obj.monoStaticTransmitterIDs;
+                case 'multiStatic'
+                    txIDs = 1 : obj.numberOfActiveTransmittingNodes;
+            end
+            if isempty(txIDs)
+                origin = zeros(3, 1);
+            else
+                origin = mean([obj.activeTransmittingNodes(txIDs).position, obj.activeReceivingNodes.position], 2);
+            end
         end
 
         function lims = get.boundary(obj)
+            switch obj.networkMode
+                case 'monoStatic'
+                    txIDs = obj.monoStaticTransmitterIDs;
+                case 'multiStatic'
+                    txIDs = 1 : obj.numberOfActiveTransmittingNodes;
+            end
             lims = zeros(3, 2);
-            nodePositions = [obj.activeTransmittingNodes.position, obj.activeReceivingNodes.position];
-            lims(:, 1) = min(nodePositions, [], 2);
-            lims(:, 2) = max(nodePositions, [], 2);
+            if ~isempty(txIDs)
+                nodePositions = [obj.activeTransmittingNodes(txIDs).position, obj.activeReceivingNodes.position];
+                lims(:, 1) = min(nodePositions, [], 2);
+                lims(:, 2) = max(nodePositions, [], 2);
+            end
         end
 
         function lims = get.boundaryListened(obj)
             lims = obj.boundary;
             offset = max([obj.activeReceivingNodes.listenedRadius]);
-            lims(:, 1) = lims(:, 1) - offset;
-            lims(:, 2) = lims(:, 2) + offset;
+            if ~isempty(offset)
+                lims(:, 1) = lims(:, 1) - offset;
+                lims(:, 2) = lims(:, 2) + offset;
+            end
         end
 
         function res = get.defaultGridResolution(obj)
@@ -219,6 +283,10 @@ classdef radarNetwork < handle
         function mf = get.matchFilter(obj)
             % (L x Nrx x Ntx matrix)
             Ts = [obj.activeReceivingNodes.samplingPeriod]; % 1 x Nrx matrix
+            if isempty(Ts)
+                mf = 1;
+                return;
+            end
             N = obj.pulseWidthSample; % Nrx x Ntx matrix
             Nunique = unique(N);
             switch length(Nunique)
@@ -244,17 +312,11 @@ classdef radarNetwork < handle
         end
 
         function G = get.matchFilterGain_dB(obj)
-            G = permute(20*log10(sum(abs(obj.matchFilter))), [2 3 1]);
+            G = permute(20*log10(sum(abs(obj.matchFilter), 1)), [2 3 1]);
         end
 
         function G = get.beamformingGain_dB(obj)
-            switch obj.beamformingMode
-                case 'bypass'
-                    arrays = [obj.activeReceivingNodes.array];
-                    G = 10*log10([arrays.numberOfTotalElements].');
-                otherwise
-                    G = [obj.activeReceivingNodes.beamformingGain_dB].';
-            end
+            G = [obj.activeReceivingNodes.beamformingGain_dB].';
         end
 
         function G = get.processingGain_dB(obj)
@@ -291,6 +353,49 @@ classdef radarNetwork < handle
         end
 
         %%% set methods
+
+        function setsynchronization(obj, options)
+            arguments
+                obj
+                options.timeOffsetBistaticPairs double = obj.timeOffsetBistaticPairs
+                options.timeDeviationBistaticPairs double {mustBeNonnegative} = obj.timeDeviationBistaticPairs
+                options.frequencyOffsetBistaticPairs (:, 1) double = obj.frequencyOffsetBistaticPairs
+                options.frequencyDeviationBistaticPairs (:, 1) double {mustBeNonnegative} = obj.frequencyDeviationBistaticPairs
+            end
+            obj.timeOffsetBistaticPairs = sizeupdate(options.timeOffsetBistaticPairs);
+            obj.timeDeviationBistaticPairs = sizeupdate(options.timeDeviationBistaticPairs);
+            options.frequencyOffsetBistaticPairs = sizeupdate(options.frequencyOffsetBistaticPairs);
+            options.frequencyDeviationBistaticPairs = sizeupdate(options.frequencyDeviationBistaticPairs);
+            obj.frequencyOffsetBistaticPairs = options.frequencyOffsetBistaticPairs(:, 1);
+            obj.frequencyDeviationBistaticPairs = options.frequencyDeviationBistaticPairs(:, 1);
+            function output = sizeupdate(input)
+                if isscalar(input)
+                    output = repmat(input, obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
+                elseif size(input, 1) == 1
+                    if size(input, 2) == obj.numberOfReceivingNodes
+                        output = repmat(input, obj.numberOfTransmittingNodes, 1);
+                    elseif size(input, 2) == obj.numberOfTransmittingNodes
+                        output = repmat(input.', 1, obj.numberOfReceivingNodes);
+                    else
+                        error('size of the input must be [%d x %d]', obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
+                    end
+                elseif size(input, 2) == 1
+                    if size(input, 1) == obj.numberOfReceivingNodes
+                        output = repmat(input.', obj.numberOfTransmittingNodes, 1);
+                    elseif size(input, 1) == obj.numberOfTransmittingNodes
+                        output = repmat(input, 1, obj.numberOfReceivingNodes);
+                    else
+                        error('size of the input must be [%d x %d]', obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
+                    end
+                else
+                    if ~isequal(size(input), [obj.numberOfTransmittingNodes obj.numberOfReceivingNodes])
+                        error('size of the input must be [%d x %d]', obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
+                    else
+                        output = input;
+                    end
+                end
+            end
+        end
 
         function setsurveillance(obj, surveillanceMode)
             arguments
@@ -343,12 +448,12 @@ classdef radarNetwork < handle
             arguments
                 obj
                 options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = obj.networkCoherency
+                options.carrierMode (1, 1) string {mustBeMember(options.carrierMode, "bandPassProcessing")} = obj.carrierMode
                 options.networkMode (1, 1) string {mustBeMember(options.networkMode, ["multiStatic", "monoStatic"])} = obj.networkMode
-                options.beamformingMode (1, 1) string {mustBeMember(options.beamformingMode, ["conventional", "bypass"])} = obj.beamformingMode
                 options.beamTime (1, 1) double {mustBeNonnegative} = obj.beamTime % sec
             end
-            obj.beamformingMode = options.beamformingMode;
             obj.networkCoherency = options.networkCoherency;
+            obj.carrierMode = options.carrierMode;
             obj.networkMode = options.networkMode;
             if strcmpi(obj.networkMode, "monoStatic")
                 obj.receivingNodeActivity = obj.receivingNodeActivity & ~isnan(obj.monoStaticTransmitterIDs);
@@ -363,7 +468,7 @@ classdef radarNetwork < handle
                 elevationBeamWidth = 70*lambda/(obj.activeReceivingNodes(rxID).array.numberOfElements(2, :).*obj.activeReceivingNodes(rxID).array.spacing(2, :));
                 azimuthRes = azimuthBeamWidth/10;
                 elevationRes = elevationBeamWidth/10;
-                switch obj.beamformingMode
+                switch obj.activeReceivingNodes(rxID).beamformingMode
                     case 'bypass'
                         azimuthBoundary = [-90 90];
                         elevationBoundary = [-90 90];
