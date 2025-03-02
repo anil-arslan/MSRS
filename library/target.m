@@ -8,7 +8,7 @@ classdef target < handle
 
     properties (SetAccess = private, GetAccess = public)
         velocity (3, :) double = zeros(3, 1) % meters per second
-        meanRCS_dbms (1, :) double = 0 % dB of meter squares
+        meanRCS_dbsm (1, :) double = 0 % dB of meter squares
     end
 
     properties (Dependent)
@@ -37,7 +37,7 @@ classdef target < handle
             arguments
                 options.position (3, :) double = zeros(3, 1)
                 options.velocity (3, :) double = zeros(3, 1)
-                options.meanRCS_dbms (1, :) double = 0
+                options.meanRCS_dbsm (1, :) double = 0
                 options.x (1, :) double = nan
                 options.y (1, :) double = nan
                 options.z (1, :) double = nan
@@ -67,7 +67,7 @@ classdef target < handle
             elseif ~isscalar(options.z)
                 options.position = [zeros(1, numel(options.z)); zeros(1, numel(options.z)); options.z(:).';];
             end
-            numberOfTargets = max([size(options.position, 2), size(options.velocity, 2), size(options.meanRCS_dbms, 2)]);
+            numberOfTargets = max([size(options.position, 2), size(options.velocity, 2), size(options.meanRCS_dbsm, 2)]);
             if size(options.position, 2) == 1
                 options.position = repmat(options.position, 1, numberOfTargets);
             elseif size(options.position, 2) ~= numberOfTargets
@@ -78,14 +78,14 @@ classdef target < handle
             elseif size(options.velocity, 2) ~= numberOfTargets
                 error('number of targets is %d', numberOfTargets);
             end
-            if size(options.meanRCS_dbms, 2) == 1
-                options.meanRCS_dbms = repmat(options.meanRCS_dbms, 1, numberOfTargets);
-            elseif size(options.meanRCS_dbms, 2) ~= numberOfTargets
+            if size(options.meanRCS_dbsm, 2) == 1
+                options.meanRCS_dbsm = repmat(options.meanRCS_dbsm, 1, numberOfTargets);
+            elseif size(options.meanRCS_dbsm, 2) ~= numberOfTargets
                 error('number of targets is %d', numberOfTargets);
             end
             obj.position = options.position;
             obj.velocity = options.velocity;
-            obj.meanRCS_dbms = options.meanRCS_dbms;
+            obj.meanRCS_dbsm = options.meanRCS_dbsm;
         end
 
         function N = get.numberOfTargets(obj)
@@ -103,7 +103,7 @@ classdef target < handle
         end
 
         function rcs = get.RCS_dbms(obj)
-            rcs = obj.meanRCS_dbms;
+            rcs = obj.meanRCS_dbsm;
         end
 
         function step(obj, timeStep)

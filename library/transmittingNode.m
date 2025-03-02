@@ -324,6 +324,12 @@ classdef transmittingNode < handle & dynamicprops
             end
         end
 
+        %%% utility methods
+
+        function beamSpaceSignal = beamform(obj, elementSpaceSignal)
+            beamSpaceSignal = pagemtimes(elementSpaceSignal, conj(obj.beamformer));
+        end
+
         %%% visualization methods
 
         function visualizewaveform(obj, options)

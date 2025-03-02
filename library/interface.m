@@ -262,7 +262,12 @@ classdef interface < handle
             % (Ntx x 1 x Nt x Nmcp matrix)
             y = zeros(obj.numberOfTransmittingNodes, 1, obj.numberOfTargets, obj.numberOfTrialsParallel);
             for txID = 1 : obj.numberOfTransmittingNodes
-                y(txID, 1, :, :) = permute(pagemtimes(obj.network.activeTransmittingNodes(txID).beamformer, 'ctranspose', obj.transmitSteeringVector{txID}, 'none'), [1 4 2 3]);
+                beam = obj.network.activeTransmittingNodes(txID).beamform(permute(obj.transmitSteeringVector{txID}, [4 1 2 3]));
+                if size(beam, 4) == obj.numberOfTrialsParallel
+                    y(txID, 1, :, :) = beam;
+                else
+                    y(txID, 1, :, :) = repmat(beam, [1 1 1 obj.numberOfTrialsParallel]);
+                end
             end
         end
 
@@ -270,7 +275,12 @@ classdef interface < handle
             % (Ntx x 1 x Nrx x Nmcp matrix)
             y = zeros(obj.numberOfTransmittingNodes, 1, obj.numberOfReceivingNodes, obj.numberOfTrialsParallel);
             for txID = 1 : obj.numberOfTransmittingNodes
-                y(txID, 1, :, :) = permute(obj.network.activeTransmittingNodes(txID).beamformer'*obj.transmitSteeringVectorDirectPath{txID}, [1 4 2 3]);
+                beam = obj.network.activeTransmittingNodes(txID).beamform(permute(obj.transmitSteeringVectorDirectPath{txID}, [4 1 2 3]));
+                if size(beam, 4) == obj.numberOfTrialsParallel
+                    y(txID, 1, :, :) = beam;
+                else
+                    y(txID, 1, :, :) = repmat(beam, [1 1 1 obj.numberOfTrialsParallel]);
+                end
             end
         end
 
@@ -281,7 +291,12 @@ classdef interface < handle
                 y{rxID} = zeros(obj.network.numberOfActiveTransmittingNodes, 1, obj.numberOfTargets, obj.network.activeReceivingNodes(rxID).numberOfTotalChannels, obj.numberOfTrialsParallel);
                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                     % M --> Nrxch (bypass: Nrxch = M)
-                    y{rxID}(txID, 1, :, :, :) = obj.network.activeReceivingNodes(rxID).beamform(obj.receiveSteeringVector{txID, rxID}, obj.carrierWavelength(txID));
+                    beam = obj.network.activeReceivingNodes(rxID).beamform(permute(obj.receiveSteeringVector{txID, rxID}, [4 1 2 3]), obj.carrierWavelength(txID));
+                    if size(beam, 5) == obj.numberOfTrialsParallel
+                        y{rxID}(txID, 1, :, :, :) = beam;
+                    else
+                        y{rxID}(txID, 1, :, :, :) = repmat(beam, [1 1 1 obj.numberOfTrialsParallel]);
+                    end
                 end
             end
         end

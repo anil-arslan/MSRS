@@ -657,22 +657,22 @@ classdef radarNetwork < handle
             else
                 figure(options.figureID);
             end
-            posRX = [obj.receivingNodes.position]/1e3;
-            posTX = [obj.transmittingNodes.position]/1e3;
+            posRX = [obj.activeReceivingNodes.position]/1e3;
+            posTX = [obj.activeTransmittingNodes.position]/1e3;
             plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 3);
             hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 3);
             text(posRX(1, :), posRX(2, :), posRX(3, :), num2str((1 : obj.numberOfActiveReceivingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
             text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
-            for rxID = 1 : obj.numberOfReceivingNodes
-                n = obj.receivingNodes(rxID).array.normalVector;
+            for rxID = 1 : obj.numberOfActiveReceivingNodes
+                n = obj.activeReceivingNodes(rxID).array.normalVector;
                 quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'b');
             end
-            for txID = 1 : obj.numberOfTransmittingNodes
-                n = obj.transmittingNodes(txID).array.normalVector;
+            for txID = 1 : obj.numberOfActiveTransmittingNodes
+                n = obj.activeTransmittingNodes(txID).array.normalVector;
                 quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), n(1), n(2), n(3), 'r');
             end
-            posRX = repelem(posRX, 1, obj.numberOfTransmittingNodes);
-            posTX = repmat(posTX, 1, obj.numberOfReceivingNodes);
+            posRX = repelem(posRX, 1, obj.numberOfActiveTransmittingNodes);
+            posTX = repmat(posTX, 1, obj.numberOfActiveReceivingNodes);
             line([posRX(1, :); posTX(1, :)], [posRX(2, :); posTX(2, :)], [posRX(3, :); posTX(3, :)], 'lineStyle', '--', 'Color', 'k');
             grid off; grid on; grid minor; title('radar network configuration');
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');

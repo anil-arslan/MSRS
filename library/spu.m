@@ -960,7 +960,6 @@ classdef spu < handle
                         end
                     end
                 case "multiStatic"
-                    warning('network mode must be monostatic');
             end
         end
 
@@ -1223,7 +1222,7 @@ classdef spu < handle
             hypothesizedPositions = reshape(permute(cat(4, gridScan.x, gridScan.y, gridScan.z), [4 1 2 3]), [3 prod(obj.gridSize)]);
             targets = target( ...
                 "position", hypothesizedPositions, ...
-                "meanRCS_dbms", 0);
+                "meanRCS_dbsm", 0);
             int = interface( ...
                 'network', obj.network, ...
                 'targets', targets);
@@ -1496,7 +1495,7 @@ classdef spu < handle
         function simulatecoverage(obj, options)
             arguments
                 obj
-                options.meanRCS_dbms (1, 1) double = 0
+                options.meanRCS_dbsm (1, 1) double = 0
                 options.onCellCenters (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.onCellCenters, [0, 1])} = 0; 
             end
             mc = obj.monteCarlo;
@@ -1535,12 +1534,12 @@ classdef spu < handle
                 targetNeighbourCellIDs = obj.neighbourssquarewindow(targetCellID, "offset", obj.configurationCompression.neighbourOffset);
                 obj.interfaces.settargets(target( ...
                     "position", targetPositions(:, targetID), ...
-                    "meanRCS_dbms", options.meanRCS_dbms));
+                    "meanRCS_dbsm", options.meanRCS_dbsm));
+                obj.coverageSimulationReport.SNRs(targetCellID) = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
                 for mcID = 1 : mc.numberOfTrials
                     if ~options.onCellCenters
                         obj.interfaces.settargetpositions("width", width);
                     end
-                    obj.coverageSimulationReport.SNRs(targetCellID) = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
                     switch obj.detectionAlgorithm
                         case {"thresholding", "peak"}
                             obj.setmatchfilteredsignals;
@@ -1577,11 +1576,11 @@ classdef spu < handle
                                 end
                             end
                     end
-                    obj.coverageSimulationReport.SNRsMean(targetCellID) = 10*log10(obj.coverageSimulationReport.SNRsMean(targetCellID)./obj.coverageSimulationReport.PD(targetCellID)/numberOfTotalTrials);
-                    if ~mod(mcID, 10)
+                    if ~mod(mcID, 100)
                         fprintf('trial = %d/%d\n', mcID, mc.numberOfTrials);
                     end
                 end
+                obj.coverageSimulationReport.SNRsMean(targetCellID) = 10*log10(obj.coverageSimulationReport.SNRsMean(targetCellID)./obj.coverageSimulationReport.PD(targetCellID)/numberOfTotalTrials);
                 if ~mod(targetID, 10)
                     fprintf('target = %d/%d\n', targetID, numberOfCells);
                 end
