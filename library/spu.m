@@ -269,7 +269,7 @@ classdef spu < handle
                                     case 1
                                         PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR)); % same as swerling 1
                                     otherwise % check again
-                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -1))./factorial(shiftdim(0 : N - 1, -1)), 3);
+                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -3))./factorial(shiftdim(0 : N - 1, -3)), 5);
                                 end
                             case "monoStatic"
                                 PD = @(PFA, SNR, N) nan;
@@ -285,7 +285,7 @@ classdef spu < handle
                                     case 1
                                         PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR)); % same as swerling 1
                                     otherwise % check again
-                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -1))./factorial(shiftdim(0 : N - 1, -1)), 3);
+                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -3))./factorial(shiftdim(0 : N - 1, -3)), 5);
                                 end
                             case "monoStatic"
                                 PD = @(PFA, SNR, N) nan;
@@ -344,7 +344,7 @@ classdef spu < handle
                         %   For generalized LRT, it is optimal adaptive processing algorithm
 
                         % check again
-                        T = @(PFA, N) gammaincinv(1 - PFA, N);
+                        T = @(PFA, N) gammaincinv(PFA, N, 'upper');
 
                 end
             end
@@ -1243,8 +1243,14 @@ classdef spu < handle
             else
                 backOfArray = false(prod(obj.gridSize), 1);
             end
+            currentSynchronization = obj.network.fractionalDelayMode;
+            cleanup = onCleanup(@() resetsynchronization(obj, currentSynchronization));
+            obj.network.settingsnetwork('fractionalDelayMode', 'off');
             uncoveredZone = squeeze(~any(interfaceGrid.waveformReceivedFromScatterers, [1 2 4]));
             obj.blindZone = backOfArray | uncoveredZone;
+            function resetsynchronization(obj, currentSynchronization)
+                obj.network.settingsnetwork('fractionalDelayMode', currentSynchronization);
+            end
         end
 
         function setintegrationindices(obj)
@@ -1281,6 +1287,9 @@ classdef spu < handle
             end
             visibleZone = ~obj.blindZone;
             numberOfVisibleCells = nnz(visibleZone);
+            currentSynchronization = obj.network.fractionalDelayMode;
+            cleanup = onCleanup(@() resetsynchronization(obj, currentSynchronization));
+            obj.network.settingsnetwork('fractionalDelayMode', 'off');
             signals = obj.hypothesizedInterface.signalReceivedFromScatterers; % Ns x 1 x Nt x Ntx x M
             % pos = hypothesizedPositions(:, (all(abs(squeeze(signals{1}(:, :, :, :, 1))) == 0)));
             % figure; plot(pos(1, :), pos(2, :), '.');
@@ -1302,6 +1311,9 @@ classdef spu < handle
                         dict{rxID} = permute(dict{rxID}, [1 3 2 4]); % (Ns_i x Ni x Nrxch matrix)
                     end
                     obj.dictionaryCompression = dict;
+            end
+            function resetsynchronization(obj, currentSynchronization)
+                obj.network.settingsnetwork('fractionalDelayMode', currentSynchronization);
             end
         end
 
