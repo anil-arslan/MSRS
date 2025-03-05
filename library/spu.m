@@ -2475,12 +2475,23 @@ classdef spu < handle
                         pos = obj.estimatedPositions{options.trialID};
                         if ~isempty(pos)
                             pos = pos(:, unique(min(size(pos, 2), options.iterationID)));
+                        else
+                            pos = double.empty(3, 0);
                         end
                     else
                         pos = obj.estimatedPositions{options.trialID};
                     end
                 case "monoStatic"
-                    pos = obj.estimatedPositions{options.monoStaticNetworkRXID}{options.monoStaticNetworkCHID, options.trialID};
+                    if options.iterationID
+                        pos = obj.estimatedPositions{options.monoStaticNetworkRXID}{options.monoStaticNetworkCHID, options.trialID};
+                        if size(pos, 2) >= options.iterationID
+                            pos = pos(:,  options.iterationID);
+                        else
+                            pos = double.empty(3, 0);
+                        end
+                    else
+                        pos = obj.estimatedPositions{options.monoStaticNetworkRXID}{options.monoStaticNetworkCHID, options.trialID};
+                    end
             end
             if isempty(options.figureID)
                 figure;
