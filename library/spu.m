@@ -436,7 +436,8 @@ classdef spu < handle
             networkBoundary = obj.network.boundaryListened;
             posScan = cell(3, 1);
             for i = 1 : 3
-                posScan{i} = networkBoundary(i, 1) : obj.gridResolution(i) : networkBoundary(i, 2);
+                boundaryCenter = mean(networkBoundary(i, :));
+                posScan{i} = [flip(boundaryCenter : -obj.gridResolution(i) : networkBoundary(i, 1)) boundaryCenter + obj.gridResolution(i) : obj.gridResolution(i) : networkBoundary(i, 2)];
                 if isscalar(posScan{i})
                     posScan{i} = mean(networkBoundary(i, :));
                 end
@@ -499,6 +500,7 @@ classdef spu < handle
             end
             mc = obj.monteCarlo;
             config = obj.configuration;
+            visibleZone = ~obj.blindZone;
             %%% carrier demodulation not implemented
             % t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
             % demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
@@ -536,10 +538,10 @@ classdef spu < handle
                 end
                 Nc = size(dict, 2); % number of cells
                 if isnan(obj.configurationCompression.numberOfTargets)
-                    targetResidual = config.threshold;
+                    targetThreshold = config.threshold;
                     numberOfIterations = Ns;
                 else
-                    targetResidual = -Inf;
+                    targetThreshold = -Inf;
                     numberOfIterations = obj.configurationCompression.numberOfTargets;
                     if numberOfIterations > Ns
                         error('Number of targets cannot be larger than the number of samples');
@@ -561,9 +563,10 @@ classdef spu < handle
                         % report = CoSaMP(dict, measurements(:), obj.configurationCompression.numberOfTargets);
                 end
                 for mcID = 1 : mc.numberOfTrialsParallel
-                    orthAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
-                    nonorthAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
-                    cellIDset = zeros(numberOfIterations, 1);
+                    orthonormalAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
+                    normalizedAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
+                    visibleCellIDset = zeros(numberOfIterations, 1);
+                    gridCellIDset = zeros(numberOfIterations, 1);
                     residualPowerHistory = zeros(numberOfIterations + 1, 1);
                     maximumPowerHistory = zeros(numberOfIterations + 1, 1);
                     if obj.saveResiduals
@@ -604,22 +607,25 @@ classdef spu < handle
                         %     thresholdReached = true;
                         %     break;
                         % end
-                        if maximumPowerHistory(currentIterationID) < targetResidual
+                        if maximumPowerHistory(currentIterationID) < targetThreshold
                             thresholdReached = true;
                             break;
                         end
-                        if ismember(cellID, cellIDset(1 : currentIterationID - 1))
-                            warning('same cellID with previous iteration');
+                        if ismember(cellID, visibleCellIDset(1 : currentIterationID - 1))
+                            % warning('same cellID with previous iteration');
                             thresholdReached = true;
                             break;
                         end
-                        cellIDset(currentIterationID) = cellID;
+                        visibleCellIDset(currentIterationID) = cellID;
+                        visibleRegion = false(Nc, 1);
+                        visibleRegion(cellID) = true;
+                        wholeRegion = false(prod(obj.gridSize), 1);
+                        wholeRegion(visibleZone) = visibleRegion;
+                        gridCellIDset(currentIterationID) = find(wholeRegion);
                         % dict: (Ns_i*Nrxch*Ntxch x Ni) or (Ns_i x Ni x Nrxch x Ntxch matrix)
                         currentAtoms = reshape(dict(:, cellID, :, :), numOfSamples, numOfParallelOpts);
-                        atomNorms = sqrt(sum(abs(currentAtoms).^2, 1));
-                        nonZeroAtoms = atomNorms ~= 0;
-                        currentAtoms(:, nonZeroAtoms) = currentAtoms(:, nonZeroAtoms)./atomNorms(nonZeroAtoms);
-                        nonorthAtomSet(:, currentIterationID, :) = currentAtoms; 
+                        normalizeatoms;
+                        normalizedAtomSet(:, currentIterationID, :) = currentAtoms; 
                 
                         % -- Step 2: update residual
                     
@@ -627,32 +633,31 @@ classdef spu < handle
                         % We use Modified Gram Schmidt
                         for previousIterationID = 1 : (currentIterationID - 1)
                             for chID = 1 : numOfParallelOpts
-                                currentAtoms(:, chID) = currentAtoms(:, chID) - (orthAtomSet(:, previousIterationID, chID)'*currentAtoms(:, chID))*orthAtomSet(:, previousIterationID, chID);
+                                currentAtoms(:, chID) = currentAtoms(:, chID) - (orthonormalAtomSet(:, previousIterationID, chID)'*currentAtoms(:, chID))*orthonormalAtomSet(:, previousIterationID, chID);
                             end
                         end
                         % Second, normalize:
-                        atomNorms = sqrt(sum(abs(currentAtoms).^2, 1));
-                        nonZeroAtoms = atomNorms ~= 0;
-                        currentAtoms(:, nonZeroAtoms) = currentAtoms(:, nonZeroAtoms)./atomNorms(nonZeroAtoms);
-                        orthAtomSet(:, currentIterationID, :) = currentAtoms;
+                        normalizeatoms;
+                        orthonormalAtomSet(:, currentIterationID, :) = currentAtoms;
                         % Third, solve least-squares problem
                         for chID = 1 : numOfParallelOpts
                             % Fourth, update residual:
-                            residual(:, chID) = residual(:, chID) - orthAtomSet(:, 1 : currentIterationID, chID)*(orthAtomSet(:, 1 : currentIterationID, chID)'*residual(:, chID));
+                            residual(:, chID) = residual(:, chID) - orthonormalAtomSet(:, 1 : currentIterationID, chID)*(orthonormalAtomSet(:, 1 : currentIterationID, chID)'*residual(:, chID));
                         end
                     end
                     if thresholdReached
                         currentIterationID = currentIterationID - 1;
                     end
                     %%% iterations end
+                    report(fusionID, mcID).cellIDs = gridCellIDset(1 : currentIterationID);
                     % For the last iteration, we need to do this without orthogonalizing dictionary
                     % so that the complexAmplitudes match what is expected.
                     if currentIterationID
                         report(fusionID, mcID).complexAmplitudes = zeros(currentIterationID, numOfParallelOpts);
                         for chID = 1 : numOfParallelOpts
-                            if all(any(nonorthAtomSet(:, 1 : currentIterationID, chID)))
+                            if all(any(normalizedAtomSet(:, 1 : currentIterationID, chID)))
                                 measurement = measurements(:, :, :, mcID);
-                                report(fusionID, mcID).complexAmplitudes(:, chID) = pinv(nonorthAtomSet(:, 1 : currentIterationID, chID))*measurement(:, chID);
+                                report(fusionID, mcID).complexAmplitudes(:, chID) = pinv(normalizedAtomSet(:, 1 : currentIterationID, chID))*measurement(:, chID);
                             else
                                 report(fusionID, mcID).complexAmplitudes(:, chID) = 0;
                             end
@@ -660,11 +665,6 @@ classdef spu < handle
                     else
                         report(fusionID, mcID).complexAmplitudes = zeros(1, numOfParallelOpts);
                     end
-                    visibleCellIDs = false(Nc, 1);
-                    visibleCellIDs(cellIDset(1 : currentIterationID)) = true;
-                    gridCellIDs = false(prod(obj.gridSize), 1);
-                    gridCellIDs(~obj.blindZone) = visibleCellIDs;
-                    report(fusionID, mcID).cellIDs = find(gridCellIDs);
                     report(fusionID, mcID).residualPowerHistory = residualPowerHistory(1 : currentIterationID + 1);
                     report(fusionID, mcID).maximumPowerHistory = maximumPowerHistory(1 : currentIterationID + 1);
                     if obj.saveResiduals
@@ -672,6 +672,11 @@ classdef spu < handle
                     end
                     report(fusionID, mcID).numberOfIterations = currentIterationID + 1;
                 end
+            end
+            function normalizeatoms
+                atomNorms = sqrt(sum(abs(currentAtoms).^2, 1));
+                nonZeroAtoms = atomNorms ~= 0;
+                currentAtoms(:, nonZeroAtoms) = currentAtoms(:, nonZeroAtoms)./atomNorms(nonZeroAtoms);
             end
         end
 
@@ -1611,6 +1616,7 @@ classdef spu < handle
                 obj
                 options.saveFigures (1, 1) {mustBeNumericOrLogical, mustBeMember(options.saveFigures, [0, 1])} = false
                 options.monoStaticNetworkRXID (1, 1) {mustBePositive, mustBeInteger} = 1
+                options.contourLevelDetection (1, 1) {mustBeNonnegative, mustBeInRange(options.contourLevelDetection, 0, 1)} = 0.85
                 options.saveDirectory (1, :) {mustBeText} = ''
             end
             if isempty(obj.coverageSimulationReport.targetCellIDs)
@@ -1636,9 +1642,9 @@ classdef spu < handle
 
             fig = figure;
             img = imagesc(x1, x2, PD);
-            colorbar; colormap('default'); clim([0 1]);
+            colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
-            set(img, 'AlphaData', visibleZone);
+            % set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
@@ -1651,7 +1657,7 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(3).Value = PD;
             savePath = fullfile(options.saveDirectory, 'PD.fig');
             hold off; drawnow;
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
@@ -1672,7 +1678,7 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(3).Value = SNRs;
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'SNRmodeled.fig');
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
@@ -1693,7 +1699,7 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
@@ -1707,7 +1713,7 @@ classdef spu < handle
             title('modeled SNR vs realized SNR with straddle loss both averaged over trials');
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'SNRcomparison.fig');
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
@@ -1720,7 +1726,7 @@ classdef spu < handle
             legend('simulation', 'theoretical', 'Location', 'best');
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'ROCmodeled.fig');
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
@@ -1733,17 +1739,26 @@ classdef spu < handle
             legend('simulation', 'theoretical', 'Location', 'best');
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'ROCrealized.fig');
-            if ~exist(savePath, 'file')
+            if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
 
-            figure;
-            PD(~visibleZone) = nan;
-            contour(x1, x2, PD, 0 : .1 : 1, 'LineWidth', 2, 'ShowText', 'on');
+            fig = figure;
+            switch obj.network.networkMode
+                case 'monoStatic'
+                    edgeColor = 'k';
+                case 'multiStatic'
+                    edgeColor = 'r';
+            end
+            contour(x1, x2, PD, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor);
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
             title('Probability of detection');
             hold off; drawnow;
+            savePath = fullfile(options.saveDirectory, ['PD' num2str(options.contourLevelDetection) '.fig']);
+            if ~exist(savePath, 'file') && options.saveFigures
+                savefig(fig, savePath);
+            end
         end
 
         %%%
@@ -1870,8 +1885,8 @@ classdef spu < handle
                 visualizationNormalizationRX(rxID) = max(interfacesRX(rxID).distanceRX(:, rxID, :), [], 'all')/1e3;
             end
 
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 2, 'MarkerSize', 5);
-            plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 2, 'MarkerSize', 5);
+            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 5);
+            plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 5);
             line([posRXrep(1, :); posTXrep(1, :)], [posRXrep(2, :); posTXrep(2, :)], [posRXrep(3, :); posTXrep(3, :)], 'lineStyle', '--', 'Color', 'k');
 
             ax = gca;
@@ -2442,12 +2457,7 @@ classdef spu < handle
             if any(options.iterationID > 0) && ~isempty(obj.compressionReport(options.monoStaticNetworkRXID, options.trialID).integratedSignals)
                 processedSignalType = 'compressed';
                 if any(strcmpi(obj.detectionAlgorithm, ["peak", "thresholding"]))
-                    switch obj.network.networkMode
-                        case "multiStatic"
-                            obj.detectionAlgorithm = "OMP";
-                        case "monoStatic"
-                            obj.detectionAlgorithm = "OMPjoint";
-                    end
+                    obj.detectionAlgorithm = "OMPjoint";
                 end
                 z = nan(prod(obj.gridSize), 1);
                 if isscalar(options.iterationID)
@@ -2463,7 +2473,7 @@ classdef spu < handle
                             "monoStaticNetworkRXID", options.monoStaticNetworkRXID, ...
                             "trialID", options.trialID);
                     end
-                    return;
+                    return
                 end
             else
                 processedSignalType = 'integrated';
@@ -2546,8 +2556,8 @@ classdef spu < handle
                     switch options.plotMode
                         case "mesh"
                             hold on;
-                            plot3(posRX(1, :), posRX(2, :), repmat(maxY, [1, size(posRX, 2)]), 'vb', 'LineWidth', 2);
-                            plot3(posTX(1, :), posTX(2, :), repmat(maxY, [1, size(posTX, 2)]), 'vr', 'LineWidth', 2);
+                            plot3(posRX(1, :), posRX(2, :), repmat(maxY, [1, size(posRX, 2)]), 'xb', 'LineWidth', 2);
+                            plot3(posTX(1, :), posTX(2, :), repmat(maxY, [1, size(posTX, 2)]), '+r', 'LineWidth', 2);
                             estimations = pos(dims, :)/1e3;
                             plot3(estimations(1, :), estimations(2, :), repmat(maxY, [1, size(estimations, 2)]), 'om', 'LineWidth', 2);
                             if ~isempty(obj.interfaces.targets)
@@ -2569,8 +2579,8 @@ classdef spu < handle
                             img.DataTipTemplate.DataTipRows(2).Value = x2;
                             img.DataTipTemplate.DataTipRows(3).Label = "power";
                             img.DataTipTemplate.DataTipRows(3).Value = Y;
-                            plot(posRX(1, :), posRX(2, :), 'vb', 'LineWidth', 2);
-                            plot(posTX(1, :), posTX(2, :), 'vr', 'LineWidth', 2);
+                            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+                            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
                             estimations = pos(dims, :)/1e3;
                             plot(estimations(1, :), estimations(2, :), 'om', 'LineWidth', 2);
                             if ~isempty(obj.interfaces.targets)
@@ -2660,8 +2670,8 @@ classdef spu < handle
                     posRX = posRX(dims, :); posTX = posTX(dims, :);
                     estimations = pos(dims, :)/1e3;
                     plot(estimations(1, :), estimations(2, :), 'om', 'LineWidth', 2); hold on;
-                    plot(posRX(1, :), posRX(2, :), 'vb', 'LineWidth', 2);
-                    plot(posTX(1, :), posTX(2, :), 'vr', 'LineWidth', 2);
+                    plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+                    plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
                     if ~isempty(obj.interfaces.targets)
                         posTargets = obj.interfaces.targets.position(dims, :)/1e3;
                         plot(posTargets(1, :), posTargets(2, :), '+k', 'LineWidth', 2);
@@ -2691,13 +2701,13 @@ classdef spu < handle
                 legend('RX', 'TX', 'estimations', 'targets', 'Location', 'best');
             end
             hold off; drawnow;
-            figure; plot(10*log10(obj.compressionReport(options.monoStaticNetworkRXID, options.trialID).residualPowerHistory), 'b');
-            hold on; yline(config.threshold_dB, 'r--');
-            grid off; grid on; grid minor;
-            xlabel('iteration ID'); ylabel('residual power (dB)');
-            title('residual power vs iteration ID of the compressing sensing algorithm');
-            legend('residual power', 'threshold', 'Location', 'best');
-            hold off; drawnow;
+            % figure; plot(10*log10(obj.compressionReport(options.monoStaticNetworkRXID, options.trialID).residualPowerHistory), 'b');
+            % hold on; yline(config.threshold_dB, 'r--');
+            % grid off; grid on; grid minor;
+            % xlabel('iteration ID'); ylabel('residual power (dB)');
+            % title('residual power vs iteration ID of the compressing sensing algorithm');
+            % legend('residual power', 'threshold', 'Location', 'best');
+            % hold off; drawnow;
         end
 
         function visualizedirectlyintegratedsignals(obj, options)
@@ -2759,8 +2769,8 @@ classdef spu < handle
             end
             posRX = [obj.network.activeReceivingNodes.position]/1e3;
             posTX = [obj.network.activeTransmittingNodes.position]/1e3;
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 2, 'MarkerSize', 10);
-            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 2, 'MarkerSize', 10);
+            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 10);
+            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 10);
             if ~isempty(obj.interfaces.targets)
                 x = obj.interfaces.targets.position(1, :)/1e3;
                 y = obj.interfaces.targets.position(2, :)/1e3;

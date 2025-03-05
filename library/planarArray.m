@@ -166,9 +166,10 @@ classdef planarArray < handle
         function setscanparameters(obj, options)
             arguments
                 obj
-                options.rpm (1, :) double {mustBeNonnegative} = obj.rpm % rev per min
-                options.steeringAzimuthStep (1, :) double {mustBeInRange(options.steeringAzimuthStep, 0, 180)} = obj.steeringAzimuthStep
-                options.steeringAzimuthLimit (1, 1) double {mustBeInRange(options.steeringAzimuthLimit, 0, 180)} = obj.steeringAzimuthLimit
+                options.rpm (1, :) double {mustBeNonnegative} = [obj.rpm] % rev per min
+                options.steeringAzimuthStep (1, :) double {mustBeInRange(options.steeringAzimuthStep, 0, 180)} = [obj.steeringAzimuthStep]
+                options.steeringAzimuthLimit (1, :) double {mustBeInRange(options.steeringAzimuthLimit, 0, 180)} = [obj.steeringAzimuthLimit]
+                options.backOfArray (1, :) logical {mustBeNumericOrLogical} = [obj.backOfArray]
             end
             numberOfArrays = numel(obj);
             if isscalar(options.rpm)
@@ -181,10 +182,21 @@ classdef planarArray < handle
             elseif length(options.steeringAzimuthStep) ~= numberOfArrays
                 error('number of arrays is %d', numberOfArrays);
             end
+            if isscalar(options.steeringAzimuthLimit)
+                options.steeringAzimuthLimit = repmat(options.steeringAzimuthLimit, 1, numberOfArrays);
+            elseif length(options.steeringAzimuthLimit) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
+            if isscalar(options.backOfArray)
+                options.backOfArray = repmat(options.backOfArray, 1, numberOfArrays);
+            elseif length(options.backOfArray) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
             for arrayID = 1 : numberOfArrays
                 obj(arrayID).rpm = options.rpm(arrayID);
                 obj(arrayID).steeringAzimuthStep = options.steeringAzimuthStep(arrayID);
-                obj(arrayID).steeringAzimuthLimit = options.steeringAzimuthLimit;
+                obj(arrayID).steeringAzimuthLimit = options.steeringAzimuthLimit(arrayID);
+                obj(arrayID).backOfArray = options.backOfArray(arrayID);
             end
         end
 

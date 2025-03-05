@@ -662,10 +662,10 @@ classdef radarNetwork < handle
             end
             posRX = [obj.activeReceivingNodes.position]/1e3;
             posTX = [obj.activeTransmittingNodes.position]/1e3;
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 3);
-            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 3);
+            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 4, 'MarkerSize', 30);
+            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 4, 'MarkerSize', 30);
             text(posRX(1, :), posRX(2, :), posRX(3, :), num2str((1 : obj.numberOfActiveReceivingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
-            text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
+            text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "top");
             for rxID = 1 : obj.numberOfActiveReceivingNodes
                 n = obj.activeReceivingNodes(rxID).array.normalVector;
                 quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'b');

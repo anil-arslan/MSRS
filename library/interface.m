@@ -361,6 +361,7 @@ classdef interface < handle
                     20*log10(obj.carrierWavelengthRealized);
                 powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
                 Pr = powerGains - powerLosses;
+                Pr(isinf(Pr) & Pr > 0) = 20*log10(1/eps);
             end
         end
 
@@ -962,9 +963,9 @@ classdef interface < handle
             end
             posRX = [obj.network.activeReceivingNodes.position]/1e3;
             posTX = [obj.network.activeTransmittingNodes.position]/1e3;
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'vb', 'LineWidth', 2, 'MarkerSize', 10);
+            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 10);
             hold on;
-            plot3(posTX(1, :), posTX(2, :), posTX(3, :), 'vr', 'LineWidth', 2, 'MarkerSize', 10);
+            plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 10);
             if ~isempty(obj.targets)
                 x = squeeze(obj.positions(1, :, :))/1e3;
                 y = squeeze(obj.positions(2, :, :))/1e3;

@@ -1,4 +1,4 @@
-std fs/10 time senkronizasyon hatasi
+std fs/10 time senkronizasyon hatasi monostaticdeki ozel bolgeyi kontrol et
 
 CURRENT
 
@@ -7,7 +7,7 @@ Critical to do list
     element pattern e.g. 120°
     monostatic multichannel debug.
     multistatic multichannel debug.
-    multi TX de different transmitted power
+    multi TX de different transmitted power?
     compressive sensing CFAR
     tek sample bandwidth sinc ile model reconstruction theory?
     resolution cell calculation, possible neighbours, cramer rao
@@ -26,6 +26,13 @@ Extra
     BP, lsqr lasso, group lasso, fused lasso, adaptive lasso, prior lasso
     stagewise OMP, generalized OMP, multipath matching pursuit, elastic net
     modeling of demodulation of carrier frequency
+
+Just Done
+    Estimated position gosterim sirasindaki hata kesfedilip duzeltildi ("find" sort edip donduruyormus ama sirayi bozmamak lazim)
+    Cell konumlari kotu dagitiliyordu, sebebi -a:cellRes:a davranisiymis duzeltildi!
+    !!Cell in ortasinda vermenin bir anlami yok direkt o celli temsilen random verilmeli, cellden celle farkliligin sebebi muhtemelen sampling aninin
+        samplingin neresine geldigidir.
+    !!Time senkronizasyon anlamsiz cunku cozunurluk modellemiyoruz, herhangi bir tespiti direkt dogruymus gibi atayoruz.
 
 DONE
     Baseband processing added.
