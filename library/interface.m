@@ -65,6 +65,9 @@ classdef interface < handle
         minorAxis double % meters (Ntx x Nrx x Nt x Nmcp matrix)
         eccentricity double % meters (Ntx x Nrx x Nt x Nmcp matrix)
         latusRectum double % meters (Ntx x Nrx x Nt x Nmcp matrix)
+        ellipseRotationMatrix double % meters (3 x 3 x Ntx x Nrx matrix)
+        ellipse double % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
+        ellipseResolution double % (3 x Nscan x Ntx x Nrx x Nt x Nmcp x 2 matrix)
 
         %%% unit vectors
         unitDirectionRX (3, :, :) double % (3 x Nrx x Nt x Nmcp matrix)
@@ -78,6 +81,8 @@ classdef interface < handle
         distanceTX (:, 1, :, :) double % meters (Ntx x 1 x Nt x Nmcp matrix)
         distanceBisector double % (Ntx x Nrx x Nt x Nmcp matrix)
         distanceBaseline double % (Ntx x Nrx matrix)
+        centerBaseline double % (3 x Ntx x Nrx matrix)
+        azimuthBaseline double % degrees (Ntx x Nrx matrix)
 
         %%% angles
         bistaticAngle double % (Ntx x Nrx x Nt x Nmcp matrix)
@@ -680,6 +685,33 @@ classdef interface < handle
             l = obj.majorAxis.*(1 - obj.eccentricity.^2);
         end
 
+        function R = get.ellipseRotationMatrix(obj)
+            % meters (3 x 3 x Ntx x Nrx matrix)
+            phi = shiftdim(obj.azimuthBaseline, -2);
+            R = [cosd(phi) -sind(phi); sind(phi) cosd(phi)];
+        end
+
+        function v = get.ellipse(obj)
+            % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
+            t = -180 : .1 : 180;
+            v = [shiftdim(obj.majorAxis, -2).*cosd(t)/2; shiftdim(obj.minorAxis, -2).*sind(t)/2];
+            v = pagemtimes(obj.ellipseRotationMatrix, v) + permute(obj.centerBaseline(1 : 2, :, :), [1 4 2 3]);
+        end
+
+        function v = get.ellipseResolution(obj)
+            % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
+            t = -180 : .1 : 180;
+            aForward = obj.bistaticRange + [obj.network.activeReceivingNodes.samplingPeriod]*obj.speedOfLight;
+            bForward = sqrt(aForward.^2 - obj.distanceBaseline.^2);
+            vForward = [shiftdim(aForward, -2).*cosd(t)/2; shiftdim(bForward, -2).*sind(t)/2];
+            vForward = pagemtimes(obj.ellipseRotationMatrix, vForward) + permute(obj.centerBaseline(1 : 2, :, :), [1 4 2 3]);
+            aBackward = obj.bistaticRange - [obj.network.activeReceivingNodes.samplingPeriod]*obj.speedOfLight;
+            bBackward = sqrt(aBackward.^2 - obj.distanceBaseline.^2);
+            vBackward = [shiftdim(aBackward, -2).*cosd(t)/2; shiftdim(bBackward, -2).*sind(t)/2];
+            vBackward = pagemtimes(obj.ellipseRotationMatrix, vBackward) + permute(obj.centerBaseline(1 : 2, :, :), [1 4 2 3]);
+            v = cat(7, real(vBackward), vForward);
+        end
+
         %%% unit vectors
 
         function u = get.unitDirectionRX(obj) % unit vector from receiving nodes to target
@@ -790,8 +822,18 @@ classdef interface < handle
         end
 
         function d = get.distanceBaseline(obj)
-            % (Ntx x Nrx x Nt matrix)
+            % (Ntx x Nrx matrix)
             d = obj.network.distanceBaseline;
+        end
+
+        function d = get.centerBaseline(obj)
+            % (3 x Ntx x Nrx matrix)
+            d = obj.network.centerBaseline;
+        end
+
+        function phi = get.azimuthBaseline(obj)
+            % degrees (Ntx x Nrx matrix)
+            phi = shiftdim(atan2d(obj.centerBaseline(2, :, :), obj.centerBaseline(1, :, :)), 1);
         end
 
         %%% angles
@@ -1089,6 +1131,38 @@ classdef interface < handle
                 legend('RX', 'TX', 'Location', 'best');
             end
             view(0, 90); hold off; drawnow;
+        end
+
+        function visualizeellipses(obj, options)
+            arguments
+                obj
+                options.ellipseType (1, 1) string {mustBeMember(options.ellipseType, ["target", "resolution"])} = "target"
+                options.targetID (1, 1) double {mustBePositive, mustBeInteger} = 1;
+                options.trialID (1, 1) double {mustBePositive, mustBeInteger} = 1;
+            end
+            switch options.ellipseType
+                case "target"
+                    x = obj.ellipse(1, :, :, :, options.targetID, options.trialID)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
+                    y = obj.ellipse(2, :, :, :, options.targetID, options.trialID)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
+                    lineSpecs = {'.'};
+                case "resolution"
+                    x = obj.ellipseResolution(1, :, :, :, options.targetID, options.trialID, :)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp x 2 matrix)
+                    y = obj.ellipseResolution(2, :, :, :, options.targetID, options.trialID, :)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp x 2 matrix)
+                    lineSpecs = {'.r', '.b'};
+            end
+            xTarget = obj.positions(1, options.targetID, options.trialID)/1e3;
+            yTarget = obj.positions(2, options.targetID, options.trialID)/1e3;
+            figure; hold on;
+            grid off; grid on; grid minor;
+            for curveID = 1 : length(lineSpecs)
+                for rxID = 1 : obj.numberOfReceivingNodes
+                    for txID = 1 : obj.numberOfTransmittingNodes
+                        plot(x(:, :, txID, rxID, :, :, curveID), y(:, :, txID, rxID, :, :, curveID), lineSpecs{curveID});
+                    end
+                end
+            end
+            plot(xTarget, yTarget, 'ok', 'LineWidth', 2, 'MarkerSize', 20);
+            xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
         end
 
         function visualizereceivedsignals(obj, options)

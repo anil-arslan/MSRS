@@ -43,6 +43,7 @@ classdef radarNetwork < handle
         positionReceivingNode (3, :, :) double % (3 x Ntx x Nrx matrix)
         positionTransmittingNode (3, :, :) double % (3 x Ntx x Nrx matrix)
         distanceBaseline double {mustBePositive} % (Ntx x Nrx matrix)
+        centerBaseline (3, :, :) double % (3 x Ntx x Nrx matrix)
         directPathDelay double {mustBePositive} % (Ntx x Nrx matrix)
         center (3, 1) double
         boundary (3, 2) double
@@ -222,8 +223,14 @@ classdef radarNetwork < handle
         end
 
         function D = get.distanceBaseline(obj)
+            % (Ntx x Nrx matrix)
             D = sqrt(sum((obj.positionReceivingNode - obj.positionTransmittingNode).^2));
             D = reshape(D, obj.numberOfActiveTransmittingNodes, obj.numberOfActiveReceivingNodes);
+        end
+
+        function D = get.centerBaseline(obj)
+            % (3 x Ntx x Nrx matrix)
+            D = (obj.positionReceivingNode + obj.positionTransmittingNode)/2;
         end
 
         function tau = get.directPathDelay(obj)

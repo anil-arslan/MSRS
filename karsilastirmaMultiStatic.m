@@ -5,8 +5,8 @@ addpath(genpath([pwd '/library']));
 d = 1e3;
 posMonostatic = [0; 0; 0];
 % posMultistatic = [posMonostatic, [0 -2*d 2*d; 0 d d; 0 0 0]];
-posMultistatic = [[-2*d -d; 0 0; 0 0], posMonostatic, [d 2*d; 0 0; 0 0]];
-% posMultistatic = [[-d -0.7*d; sqrt(3)*d 0.7*d; 0 0], posMonostatic, [0.7*d d; 0.7*d sqrt(3)*d; 0 0]];
+% posMultistatic = [[-2*d -d; 0 0; 0 0], posMonostatic, [d 2*d; 0 0; 0 0]];
+posMultistatic = [[-d -0.7*d; sqrt(3)*d 0.7*d; 0 0], posMonostatic, [0.7*d d; 0.7*d sqrt(3)*d; 0 0]];
 
 arrayRX = planarArray( ...
     "numberOfElements", [11 1], ...
@@ -114,6 +114,9 @@ sp.configure( ...
     "numberOfTrials", 100, ...
     'numberOfTrialsParallel', 1, ...
     'numberOfTrialsParallel', 100);
+
+int.visualizeellipses("ellipseType", "target");
+int.visualizeellipses("ellipseType", "resolution");
 
 %%
 % arrayRX.visualizearray;
