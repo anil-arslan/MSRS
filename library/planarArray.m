@@ -10,6 +10,7 @@ classdef planarArray < handle
         rpm (1, 1) double {mustBeNonnegative} = 0 % rev per min
         scanDirection (1, 1) string {mustBeMember(scanDirection, ["cw", "ccw"])} = "ccw"
         backOfArray (1, 1) logical {mustBeNumericOrLogical} = false
+        backOfArrayRegion (1, 1) double {mustBeInRange(backOfArrayRegion, 0, 360)} = 180
     end
 
     properties (Dependent)
@@ -67,6 +68,7 @@ classdef planarArray < handle
                 options.rpm (1, 1) double {mustBeNonnegative} = 0 % rev per min
                 options.scanDirection (1, 1) string {mustBeMember(options.scanDirection, ["cw", "ccw"])} = "ccw"
                 options.backOfArray (1, 1) logical {mustBeNumericOrLogical} = false
+				options.backOfArrayRegion (1, 1) double {mustBeInRange(options.backOfArrayRegion, 0, 360)} = 180
             end
             obj.numberOfElements = options.numberOfElements;
             obj.spacing = options.spacing;
@@ -85,6 +87,7 @@ classdef planarArray < handle
             obj.rpm = options.rpm;
             obj.scanDirection = options.scanDirection;
             obj.backOfArray = options.backOfArray;
+            obj.backOfArrayRegion = options.backOfArrayRegion;
         end
 
         %%% get methods
@@ -170,6 +173,7 @@ classdef planarArray < handle
                 options.steeringAzimuthStep (1, :) double {mustBeInRange(options.steeringAzimuthStep, 0, 180)} = [obj.steeringAzimuthStep]
                 options.steeringAzimuthLimit (1, :) double {mustBeInRange(options.steeringAzimuthLimit, 0, 180)} = [obj.steeringAzimuthLimit]
                 options.backOfArray (1, :) logical {mustBeNumericOrLogical} = [obj.backOfArray]
+				options.backOfArrayRegion (1, :) double {mustBeInRange(options.backOfArrayRegion, 0, 360)} = [obj.backOfArrayRegion]
             end
             numberOfArrays = numel(obj);
             if isscalar(options.rpm)
@@ -192,11 +196,17 @@ classdef planarArray < handle
             elseif length(options.backOfArray) ~= numberOfArrays
                 error('number of arrays is %d', numberOfArrays);
             end
+            if isscalar(options.backOfArrayRegion)
+                options.backOfArrayRegion = repmat(options.backOfArrayRegion, 1, numberOfArrays);
+            elseif length(options.backOfArrayRegion) ~= numberOfArrays
+                error('number of arrays is %d', numberOfArrays);
+            end
             for arrayID = 1 : numberOfArrays
                 obj(arrayID).rpm = options.rpm(arrayID);
                 obj(arrayID).steeringAzimuthStep = options.steeringAzimuthStep(arrayID);
                 obj(arrayID).steeringAzimuthLimit = options.steeringAzimuthLimit(arrayID);
                 obj(arrayID).backOfArray = options.backOfArray(arrayID);
+                obj(arrayID).backOfArrayRegion = options.backOfArrayRegion(arrayID);
             end
         end
 

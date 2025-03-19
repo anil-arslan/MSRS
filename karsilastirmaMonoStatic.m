@@ -37,6 +37,8 @@ receiverArrays = [receivers.array];
 transmitterArrays.setorientation("yaw", 90);
 receiverArrays.setorientation("yaw", 90);
 % transmitterArrays.steer("steeringAzimuth", 30);
+receiverArrays.setscanparameters("backOfArrayRegion", 340);
+transmitterArrays.setscanparameters("backOfArrayRegion", 340);
 
 network = radarNetwork( ...
     'receivingNodes', receivers, ...
@@ -59,11 +61,11 @@ network.setsynchronization( ...
     );
 
 targets = target( ...
-    'position', [d/2; d/2; 0], ...
-    'position', [-2.5*0.0484434*d; 0.0515566*d; 0], ... straddle loss yuzunden multiple hedef
-    'position', [1.03771; 1.03771; 0], ... straddle loss yuzunden multiple hedef
-    'position', [-3*0.0484434*d; 10*0.0515566*d + 30; 0], ... straddle loss
-    'position', [1.03771; 601.038; 0], ...
+    ...'position', [-120; 50; 0], ... straddle loss
+    ...'position', [0; 1; 0], ... straddle loss
+    ...'position', [-150; 550; 0], ... straddle loss
+    ...'position', [500; 500; 0], ... on cell w/out straddle
+    'position', [0; 600; 0], ... on cell w/out straddle
     'meanRCS_dbsm', 0, ...
     'velocity', [0; -0*d/2; 0]);
 int = interface( ...
@@ -106,7 +108,7 @@ sp.configure( ...
 %%
 % arrayRX.visualizearray;
 % network.visualizenetwork;
-% int.visualizescenario("showPattern", 0);
+% int.visualizescenario("showPattern", 1);
 % int.visualizereceivedsignals;
 % int.visualizebeamformedsignals;
 % sp.visualizefilteredsignals("trialID", 1);
@@ -139,14 +141,35 @@ sp.visualizeintegratedsignals( ...
     "monoStaticNetworkRXID", 1, ...
     "monoStaticNetworkCHID", 1);
 % sp.visualizeestimation;
-%%
+
+%% resolution simulation
+
+targets = target( ...
+    ...'position', [-120; 50; 0], ... straddle loss
+    ...'position', [0; 1; 0], ... straddle loss
+    ...'position', [-150; 550; 0], ... straddle loss
+    ...'position', [500; 500; 0], ... on cell w/out straddle
+    'position', [0; 600; 0], ... on cell w/out straddle
+    'meanRCS_dbsm', 0);
+int.settargets(targets)
 clc;
-% [PD, PFA] = sp.simulatedetection;
+sp.configure( ...
+    "seed", 0, ...
+    "numberOfTrials", 1, ...
+    "numberOfTrialsParallel", 1000);
+sp.simulatedetection( ...
+    "onCellCenters", 1);
+close all;
+sp.visualizeresolutionsimulation;
+
+%% coverage simulation
+
+clc;
 sp.configure( ...
     "seed", 0, ...
     "neighbourOffset", 100, ...
     "numberOfTrials", 1, ...
-    "numberOfTrialsParallel", 1000);
+    "numberOfTrialsParallel", 200);
 sp.simulatecoverage( ...
     "meanRCS_dbsm", 10, ...
     "onCellCenters", 0);

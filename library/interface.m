@@ -160,7 +160,7 @@ classdef interface < handle
             if isempty(transmitArrays)
                 backOfArray = false(obj.numberOfTargets, 1);
             else
-                backOfArray = shiftdim(pagemtimes(permute([transmitArrays.normalVector], [1 3 4 2]), 'ctranspose', permute(obj.unitDirectionTX, [1 3 4 2]), 'none') < 0, 1);
+                backOfArray = shiftdim(pagemtimes(permute([transmitArrays.normalVector], [1 3 4 2]), 'ctranspose', permute(obj.unitDirectionTX, [1 3 4 2]), 'none') < shiftdim(cosd([transmitArrays.backOfArrayRegion]/2), -2), 1);
                 backOfArray(:, :, [transmitArrays.backOfArray]) = false;
             end
         end
@@ -185,7 +185,7 @@ classdef interface < handle
             if isempty(transmitArrays)
                 backOfArray = false(obj.numberOfReceivingNodes, 1);
             else
-                backOfArray = shiftdim(pagemtimes(permute([transmitArrays.normalVector], [1 3 2]), 'ctranspose', permute(obj.unitDirectionBaseline, [1 3 2]), 'none') < 0, 1);
+                backOfArray = shiftdim(pagemtimes(permute([transmitArrays.normalVector], [1 3 2]), 'ctranspose', permute(obj.unitDirectionBaseline, [1 3 2]), 'none') < cosd([transmitArrays.backOfArrayRegion]/2), 1);
                 backOfArray(:, [transmitArrays.backOfArray]) = false;
             end
         end
@@ -210,7 +210,7 @@ classdef interface < handle
             if isempty(receiveArrays)
                 backOfArray = false(obj.numberOfTargets, 1);
             else
-                backOfArray = shiftdim(pagemtimes(permute([receiveArrays.normalVector], [1 3 4 2]), 'ctranspose', permute(obj.unitDirectionRX, [1 3 4 2]), 'none') < 0, 1);
+                backOfArray = shiftdim(pagemtimes(permute([receiveArrays.normalVector], [1 3 4 2]), 'ctranspose', permute(obj.unitDirectionRX, [1 3 4 2]), 'none') < shiftdim(cosd([receiveArrays.backOfArrayRegion]/2), -2), 1);
                 backOfArray(:, :, [receiveArrays.backOfArray]) = false;
             end
         end
@@ -236,7 +236,7 @@ classdef interface < handle
             if isempty(receiveArrays)
                 backOfArray = false(obj.numberOfTransmittingNodes, 1);
             else
-                backOfArray = shiftdim(pagemtimes(permute([receiveArrays.normalVector], [1 3 2]), 'ctranspose', obj.unitDirectionBaseline, 'none') < 0, 1);
+                backOfArray = shiftdim(pagemtimes(permute([receiveArrays.normalVector], [1 3 2]), 'ctranspose', obj.unitDirectionBaseline, 'none') < cosd([receiveArrays.backOfArrayRegion]/2), 1);
                 backOfArray(:, [receiveArrays.backOfArray]) = false;
             end
         end

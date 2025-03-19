@@ -120,6 +120,12 @@ classdef spu < handle
             'PD', [], ...
             'SNRs', [], ...
             'SNRsMean', [])
+        resolutionSimulationReport struct = struct( ...
+            'PD', [], ...
+            'PFA', [], ...
+            'SNRsMean', [], ...
+            'SNRmodeled', [], ...
+            'PDmodeled', []);
     end
 
     properties (Access = private)
@@ -1423,19 +1429,36 @@ classdef spu < handle
 
         %%% monte carlo simulation
 
-        function [PD, PFA] = simulatedetection(obj)
+        function simulatedetection(obj, options)
             arguments
                 obj
+                options.onCellCenters (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.onCellCenters, [0, 1])} = 0; 
             end
+            config = obj.configuration;
             mc = obj.monteCarlo;
-            gridScan = obj.gridPointsMesh;
-            dims = find(size(gridScan.x) ~= 1);
-            dimensions = {"x", "y", "z"};
-            dimensions = dimensions(dims);
-            numberOfCells = prod(obj.gridSize);
-            probabilities = zeros(obj.gridSize([2, 1, 3]));
             numberOfTotalTrials = mc.numberOfTrials*mc.numberOfTrialsParallel;
+            originalNumberOfTargets = obj.configurationCompression.numberOfTargets;
+            previousCompressionReport = obj.compressionReport;
+            cleanup = onCleanup(@() cleanupFunction(obj, originalNumberOfTargets, previousCompressionReport));
+            obj.configure("numberOfTargets", nan);
+            gridScan = obj.gridPointsMesh;
+            dimensions = find(size(gridScan.x) ~= 1);
+            width = zeros(3, 1);
+            width(dimensions) = obj.gridResolution(dimensions);
+            obj.resolutionSimulationReport = struct( ...
+                'PD', [], ...
+                'PFA', [], ...
+                'SNRsMean', [], ...
+                'SNRmodeled', [], ...
+                'PDmodeled', []);
+            obj.resolutionSimulationReport.PD = zeros(prod(obj.gridSize), 1);
+            obj.resolutionSimulationReport.SNRmodeled = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
+            obj.resolutionSimulationReport.PDmodeled = obj.ROC(config.PFA, 10.^(.1*obj.resolutionSimulationReport.SNRmodeled(:)), obj.network.numberOfActiveBistaticPairs);
+            obj.resolutionSimulationReport.SNRsMean = zeros(prod(obj.gridSize), 1);
             for mcID = 1 : mc.numberOfTrials
+                if ~options.onCellCenters
+                    obj.interfaces.settargetpositions("width", width);
+                end
                 switch obj.detectionAlgorithm
                     case {"thresholding", "peak"}
                         obj.setmatchfilteredsignals;
@@ -1445,68 +1468,137 @@ classdef spu < handle
                         error("not implemented");
                 end
                 idx = obj.hypothesisTestingResults;
-                for mcpID = 1 : mc.numberOfTrialsParallel
-                    probabilities(idx{mcpID}) = probabilities(idx{mcpID}) + 1/numberOfTotalTrials;
+                switch obj.network.networkMode
+                    case 'multiStatic'
+                        for mcpID = 1 : mc.numberOfTrialsParallel
+                            targetCellIDs = idx{mcpID};
+                            obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
+                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : end - 1);
+                        end
+                    case 'monoStatic'
+                        for mcpID = 1 : mc.numberOfTrialsParallel
+                            targetCellIDs = cell(1, obj.network.numberOfParallelSignalFusions);
+                            SNRmonostatic = cell(1, obj.network.numberOfParallelSignalFusions);
+                            for fusionID = 1 : obj.network.numberOfParallelSignalFusions
+                                targetCellIDs{fusionID} = idx{fusionID}{mcpID};
+                                SNRmonostatic{fusionID} = obj.compressionReport(fusionID, mcpID).maximumPowerHistory(1 : end - 1);
+                            end
+                            targetCellIDs = cell2mat(targetCellIDs);
+                            SNRmonostatic = cell2mat(SNRmonostatic);
+                            [uniqueTargetCellIDs, uniqueIndices] = unique(targetCellIDs);
+                            for detectionID = 1 : length(uniqueTargetCellIDs)
+                                sameIndices = targetCellIDs == uniqueTargetCellIDs(detectionID);
+                                SNRmonostatic(sameIndices) = max(SNRmonostatic(sameIndices));
+                            end
+                            targetCellIDs = targetCellIDs(uniqueIndices);
+                            SNRmonostatic = SNRmonostatic(uniqueIndices);
+                            obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
+                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + SNRmonostatic;
+                        end
                 end
-                if ~mod(mcID, 10)
+                if ~mod(mcID, 100)
                     fprintf('trial = %d\n', mcID);
                 end
             end
-            if ~isempty(obj.interfaces.targets)
-                targetCellIDs = cell(1, obj.interfaces.numberOfTargets);
-                cellPositions = cat(3, gridScan.x, gridScan.y, gridScan.z);
-                cellPositions = reshape(cellPositions(:, :, dims), [], numel(dims)).';
-                targetPositions = obj.interfaces.targets.position(dims, :);
-                for targetID = 1 : obj.interfaces.numberOfTargets
-                    targetCellIDs{targetID} = find(sum(abs(targetPositions(:, targetID) - cellPositions).^2) < sum(abs(obj.gridResolution(dims)).^2));
-                end
-                targetCellIDs = unique(cell2mat(targetCellIDs));
-            else
-                targetCellIDs = [];
+            obj.resolutionSimulationReport.SNRsMean = 10*log10(obj.resolutionSimulationReport.SNRsMean./obj.resolutionSimulationReport.PD/numberOfTotalTrials);
+            obj.resolutionSimulationReport.SNRsMean(~logical(obj.resolutionSimulationReport.PD)) = -inf;
+            function cleanupFunction(obj, originalNumberOfTargets, previousCompressionReport)
+                obj.compressionReport = previousCompressionReport;
+                obj.interfaces.settargetpositions("width", 0);
+                obj.configure("numberOfTargets", originalNumberOfTargets);
             end
-            noiseCellIDs = setdiff(1 : numberOfCells, targetCellIDs);
-            PD = nan(obj.gridSize([2, 1, 3]));
-            PFA = nan(obj.gridSize([2, 1, 3]));
-            PD(targetCellIDs) = probabilities(targetCellIDs);
-            PFA(noiseCellIDs) = probabilities(noiseCellIDs);
+        end
+
+        function visualizeresolutionsimulation(obj, options)
+            arguments
+                obj
+                options.saveFigures (1, 1) {mustBeNumericOrLogical, mustBeMember(options.saveFigures, [0, 1])} = false
+                options.monoStaticNetworkRXID (1, 1) {mustBePositive, mustBeInteger} = 1
+                options.saveDirectory (1, :) {mustBeText} = ''
+            end
+            if isempty(obj.resolutionSimulationReport.PD)
+                fprintf('resolution simulation had not executed\n');
+                return;
+            end
+            if ~isempty(options.saveDirectory) && ~isfolder(options.saveDirectory) && options.saveFigures
+                mkdir(options.saveDirectory);
+            end
+            gridScan = obj.gridPointsMesh;
+            dimensions = {"x", "y", "z"};
+            dims = size(gridScan.x) ~= 1;
+            dimensions = dimensions(dims);
             xLabel = dimensions{1} + " (km)";
             yLabel = dimensions{2} + " (km)";
             x1 = obj.gridPoints{1}/1e3;
             x2 = obj.gridPoints{2}/1e3;
-            figure; img = imagesc(x1, x2, PD);
-            targetCells = false(obj.gridSize([2, 1, 3]));
-            targetCells(targetCellIDs) = true;
-            set(img, 'AlphaData', targetCells);
+            visibleZone = reshape(~obj.blindZone, obj.gridSize([2 1 3]));
+
+            PDmodeled = obj.resolutionSimulationReport.PDmodeled(:, options.monoStaticNetworkRXID);
+            SNRmodeled = obj.resolutionSimulationReport.SNRmodeled(:, options.monoStaticNetworkRXID);
+            PD = reshape(obj.resolutionSimulationReport.PD(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            SNRsMean = reshape(obj.resolutionSimulationReport.SNRsMean(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+
+
+            if ~isempty(obj.interfaces.targets)
+                x = obj.interfaces.targets.position(dims, :)/1e3;
+            end
+            posRX = [obj.network.activeReceivingNodes.position]/1e3;
+            posTX = [obj.network.activeTransmittingNodes.position]/1e3;
+            posRX = posRX(dims, :); posTX = posTX(dims, :);
+
+            fig = figure;
+            img = imagesc(x1, x2, PD);
+            colorbar; colormap('gray'); clim([0 1]);
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            % set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
+            grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            title('Probability of detection', sprintf('modeled P_d = %g', PDmodeled)); hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "PD";
             img.DataTipTemplate.DataTipRows(3).Value = PD;
-            colorbar; colormap('spring');
             hold on;
             if ~isempty(obj.interfaces.targets)
-                plot3(targetPositions(1, :)/1e3, targetPositions(2, :)/1e3, ones(1, size(targetPositions, 2)), 'ok', 'LineWidth', 1);
+                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
             end
-            grid on; grid minor; view(0, 90);
-            xlabel(xLabel); ylabel(yLabel); zlabel('P_D');
-            title('Probability of detection'); hold off;
-            figure; img = imagesc(x1, x2, PFA);
-            noiseCells = true(obj.gridSize([2, 1, 3]));
-            noiseCells(targetCellIDs) = false;
-            set(img, 'AlphaData', noiseCells);
+            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            savePath = fullfile(options.saveDirectory, 'PD.fig');
+            hold off; drawnow;
+            if ~exist(savePath, 'file') && options.saveFigures
+                savefig(fig, savePath);
+            end
+
+            fig = figure;
+            img = imagesc(x1, x2, SNRsMean);
+            colorbar; colormap('default');
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            set(img, 'AlphaData', visibleZone & ~isinf(SNRsMean));
             delete(datatip(img, 2, 2));
+            grid off; grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel);
+            title('realized SNR with straddle loss averaged over trials', sprintf('modeled SNR = %g', SNRmodeled)); hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "PFA";
-            img.DataTipTemplate.DataTipRows(3).Value = PFA;
-            colorbar; colormap('spring');
-            grid on; grid minor; view(0, 90);
-            xlabel(xLabel); ylabel(yLabel); zlabel('P_{FA}');
-            title(sprintf('Probability of false alarm %g', mean(PFA, 'all', 'omitnan'))); hold off;
+            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
+            hold on;
+            if ~isempty(obj.interfaces.targets)
+                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
+            end
+            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            hold off; drawnow;
+            savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
+            if ~exist(savePath, 'file') && options.saveFigures
+                savefig(fig, savePath);
+            end
         end
 
         function simulatecoverage(obj, options)
@@ -1623,7 +1715,7 @@ classdef spu < handle
                 fprintf('coverage simulation had not executed\n');
                 return;
             end
-            if ~isfolder(options.saveDirectory)
+            if ~isempty(options.saveDirectory) && ~isfolder(options.saveDirectory) && options.saveFigures
                 mkdir(options.saveDirectory);
             end
             config = obj.configuration;
