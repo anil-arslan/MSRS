@@ -12,7 +12,10 @@ classdef spu < handle
             'PFA', 1e-6, ...
             'PD', 1, ...
             'threshold', 0, ...
-            'threshold_dB', -inf);
+            'threshold_dB', -inf, ...
+            'prePFA', 1, ...
+            'preThreshold', 0, ...
+            'preThreshold_dB', -inf);
         configurationCompression (1, 1) struct = struct( ...
             'numberOfTargets', nan, ...
             'neighbourOffset', 1)
@@ -367,6 +370,8 @@ classdef spu < handle
                     cfg.threshold = obj.threshold(cfg.PFA, 1);
             end
             cfg.threshold_dB = 10*log10(abs(cfg.threshold));
+            cfg.preThreshold = -log(PFA);
+            cfg.preThreshold_dB = 10*log10(cfg.preThreshold);
         end
 
         function n = get.noisePowersPerSample_W(obj)
@@ -580,6 +585,36 @@ classdef spu < handle
                     end
                     thresholdReached = false;
                     residual = permute(measurements(:, :, :, mcID), [1 4 2 3]); % (Ns x 1 x Nrxch x Ntxch) or (Ns*Nrxch*Ntxch x 1)
+                    if config.prePFA ~= 1
+
+                        % (1 x Nrx cell of Ns + L - 1 x Nrxch x Nmcp matrix)
+                        T = cell(1, obj.network.numberOfActiveReceivingNodes);
+                        config = obj.configuration;
+                        mc = obj.monteCarlo;
+                        NTC = obj.configurationMonostatic.numberOfTrainingCells;
+                        NGC = obj.configurationMonostatic.numberOfGuardCells;
+                        for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                            numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
+                            txID = obj.network.monoStaticTransmitterIDs(rxID);
+                            L = obj.network.pulseWidthSample(rxID, txID) - 2;
+                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                            samples = -L : N;
+                            numberOfSamples = length(samples);
+                            T{rxID} = zeros(numberOfSamples, numberOfTotalChannels, mc.numberOfTrialsParallel);
+                            for sampleID = 1 : numberOfSamples % OSCFAR
+                                trainingStart = sampleID + NGC + 1;
+                                upperTraining = min(trainingStart : trainingStart + NTC - 1, numberOfSamples);
+                                trainingStart = sampleID - NGC - 1;
+                                lowerTraining = max(trainingStart - NTC + 1 : trainingStart, 1);
+                                sampleIdx = [lowerTraining, upperTraining];
+                                Nt = length(sampleIdx);
+                                alpha = Nt.*(config.PFA.^(-1/Nt) - 1);
+                                T{rxID}(sampleID, :, :) = alpha.*mean(abs(obj.signalsMatchFiltered{rxID}(sampleIdx, :, :, :)).^2);
+                                % T{rxID}(sampleID, :, :) = alpha.*mean(abs(residual{rxID}(sampleIdx, :, :, :)).^2);
+                            end
+                        end
+                        % residual > T;
+                    end
                     for currentIterationID = 1 : numberOfIterations
                         switch obj.processingAlgorithm
                             case 1
@@ -1349,6 +1384,7 @@ classdef spu < handle
             arguments
                 obj
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
+                options.prePFA (1, 1) double {mustBeNonnegative} = obj.configuration.prePFA
                 options.numberOfTargets (1, 1) double = obj.configurationCompression.numberOfTargets
                 options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
                 options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
@@ -1359,6 +1395,7 @@ classdef spu < handle
                 options.seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.seedShuffle, [0, 1])} = obj.seedShuffle
             end
             obj.configuration.PFA = options.PFA;
+            obj.configuration.prePFA = options.prePFA;
             obj.configurationCompression.numberOfTargets = options.numberOfTargets;
             obj.configurationCompression.neighbourOffset = options.neighbourOffset;
             obj.processingAlgorithm = options.processingAlgorithm;
