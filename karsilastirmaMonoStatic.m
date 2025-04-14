@@ -37,8 +37,8 @@ receiverArrays = [receivers.array];
 transmitterArrays.setorientation("yaw", 90);
 receiverArrays.setorientation("yaw", 90);
 % transmitterArrays.steer("steeringAzimuth", 30);
-receiverArrays.setscanparameters("backOfArrayRegion", 340);
-transmitterArrays.setscanparameters("backOfArrayRegion", 340);
+receiverArrays.setscanparameters("backOfArrayRegion", 180);
+transmitterArrays.setscanparameters("backOfArrayRegion", 180);
 
 network = radarNetwork( ...
     'receivingNodes', receivers, ...
@@ -105,6 +105,9 @@ sp.configure( ...
     'numberOfTrialsParallel', 1, ...
     'numberOfTrialsParallel', 100);
 
+int.visualizeellipses("ellipseType", "target");
+int.visualizeellipses("ellipseType", "resolution");
+
 %%
 % arrayRX.visualizearray;
 % network.visualizenetwork;
@@ -148,8 +151,8 @@ targets = target( ...
     ...'position', [-120; 50; 0], ... straddle loss
     ...'position', [0; 1; 0], ... straddle loss
     ...'position', [-150; 550; 0], ... straddle loss
-    ...'position', [500; 500; 0], ... on cell w/out straddle
-    'position', [0; 600; 0], ... on cell w/out straddle
+    'position', [500; 500; 0], ... on cell w/out straddle
+    ...'position', [0; 600; 0], ... on cell w/out straddle
     'meanRCS_dbsm', 0);
 int.settargets(targets)
 clc;

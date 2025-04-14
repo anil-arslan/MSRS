@@ -11,8 +11,11 @@ classdef spu < handle
         configuration (1, 1) struct = struct( ...
             'PFA', 1e-6, ...
             'PD', 1, ...
+            'numberOfNodesAdaptive', false, ...
             'threshold', 0, ...
+            'thresholdAdaptive', 0, ...
             'threshold_dB', -inf, ...
+            'thresholdAdaptive_dB', 0, ...
             'prePFA', 1, ...
             'preThreshold', 0, ...
             'preThreshold_dB', -inf);
@@ -365,12 +368,15 @@ classdef spu < handle
                 case "multiStatic"
                     cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin, obj.network.numberOfActiveBistaticPairs);
                     cfg.threshold = obj.threshold(cfg.PFA, obj.network.numberOfActiveBistaticPairs);
+                    cfg.thresholdAdaptive = obj.threshold(cfg.PFA, 1 : obj.network.numberOfActiveBistaticPairs);
                 case "monoStatic"
                     cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin, 1);
                     cfg.threshold = obj.threshold(cfg.PFA, 1);
+                    cfg.thresholdAdaptive = cfg.threshold;
             end
             cfg.threshold_dB = 10*log10(abs(cfg.threshold));
-            cfg.preThreshold = -log(PFA);
+            cfg.thresholdAdaptive_dB = 10*log10(abs(cfg.thresholdAdaptive));
+            cfg.preThreshold = -log(cfg.prePFA);
             cfg.preThreshold_dB = 10*log10(cfg.preThreshold);
         end
 
@@ -548,6 +554,64 @@ classdef spu < handle
                         w = 1;
                 end
                 Nc = size(dict, 2); % number of cells
+                if config.prePFA ~= 1
+                    targetThresholdAdaptive = config.thresholdAdaptive;
+                    NTC = obj.configurationMonostatic.numberOfTrainingCells;
+                    NGC = obj.configurationMonostatic.numberOfGuardCells;
+                    matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
+                    %%% carrier demodulation not implemented
+                    % t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
+                    % demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
+                    Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
+                    switch obj.network.networkMode
+                        case 'multiStatic'
+                            numberOfTransmitters = obj.network.numberOfActiveTransmittingNodes;
+                        case 'monoStatic'
+                            numberOfTransmitters = 1;
+                    end
+                    dictionaryCellIndices = cell(obj.network.numberOfActiveReceivingNodes, numberOfTransmitters, mc.numberOfTrialsParallel);
+                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                        for txID = 1 : numberOfTransmitters
+                            switch obj.network.networkMode
+                                case 'multiStatic'
+                                    matchFilter = conj(matchFilters(:, rxID, txID));
+                                case 'monoStatic'
+                                    matchFilter = conj(matchFilters(:, rxID, obj.network.monoStaticTransmitterIDs(rxID)));
+                            end
+                            for mcID = 1 : mc.numberOfTrialsParallel
+                                % numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
+                                signalChannel = measurements(:, rxID, txID, mcID);
+                                signalChannel(isinf(signalChannel)) = 0;
+                                preMatchFilteredSignal = conv(signalChannel, matchFilter);
+                                numberOfSamples = size(preMatchFilteredSignal, 1);
+                                preThresholdCFAR = zeros(numberOfSamples, 1);
+                                for sampleID = 1 : numberOfSamples % OSCFAR
+                                    trainingStart = sampleID + NGC + 1;
+                                    upperTraining = unique(min(trainingStart : trainingStart + NTC - 1, numberOfSamples));
+                                    trainingStart = sampleID - NGC - 1;
+                                    lowerTraining = unique(max(trainingStart - NTC + 1 : trainingStart, 1));
+                                    trainingCellIDs = [lowerTraining, upperTraining];
+                                    numberOfTrainingCells = length(trainingCellIDs);
+                                    alpha = numberOfTrainingCells.*(config.prePFA.^(-1/numberOfTrainingCells) - 1);
+                                    preThresholdCFAR(sampleID) = alpha.*mean(abs(preMatchFilteredSignal(trainingCellIDs)).^2);
+                                end 
+                                detectionIndices = find(abs(preMatchFilteredSignal).^2 > preThresholdCFAR);
+                                dictionaryCellIndices{rxID, txID, mcID} = ismember(obj.integrationIndices(txID, rxID, :), detectionIndices);
+                                % figure; plot(20*log10(abs(preMatchFilteredSignal)));
+                                % hold on; plot(10*log10(preThresholdCFAR));
+                            end
+                        end
+                    end
+                    preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
+                    preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
+                    for mcID = 1 : mc.numberOfTrialsParallel
+                        preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nc x Nrx x Ntx matrix
+                        preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
+                        preDetectionNumberOfNodes(:, mcID) = sum(preDetectionIndices, [1 2]); % Nc x Nmcp
+                    end
+                else
+                    preDetectionCellIDs = {};
+                end
                 if isnan(obj.configurationCompression.numberOfTargets)
                     targetThreshold = config.threshold;
                     numberOfIterations = Ns;
@@ -585,36 +649,6 @@ classdef spu < handle
                     end
                     thresholdReached = false;
                     residual = permute(measurements(:, :, :, mcID), [1 4 2 3]); % (Ns x 1 x Nrxch x Ntxch) or (Ns*Nrxch*Ntxch x 1)
-                    if config.prePFA ~= 1
-
-                        % (1 x Nrx cell of Ns + L - 1 x Nrxch x Nmcp matrix)
-                        T = cell(1, obj.network.numberOfActiveReceivingNodes);
-                        config = obj.configuration;
-                        mc = obj.monteCarlo;
-                        NTC = obj.configurationMonostatic.numberOfTrainingCells;
-                        NGC = obj.configurationMonostatic.numberOfGuardCells;
-                        for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                            numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
-                            txID = obj.network.monoStaticTransmitterIDs(rxID);
-                            L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
-                            samples = -L : N;
-                            numberOfSamples = length(samples);
-                            T{rxID} = zeros(numberOfSamples, numberOfTotalChannels, mc.numberOfTrialsParallel);
-                            for sampleID = 1 : numberOfSamples % OSCFAR
-                                trainingStart = sampleID + NGC + 1;
-                                upperTraining = min(trainingStart : trainingStart + NTC - 1, numberOfSamples);
-                                trainingStart = sampleID - NGC - 1;
-                                lowerTraining = max(trainingStart - NTC + 1 : trainingStart, 1);
-                                sampleIdx = [lowerTraining, upperTraining];
-                                Nt = length(sampleIdx);
-                                alpha = Nt.*(config.PFA.^(-1/Nt) - 1);
-                                T{rxID}(sampleID, :, :) = alpha.*mean(abs(obj.signalsMatchFiltered{rxID}(sampleIdx, :, :, :)).^2);
-                                % T{rxID}(sampleID, :, :) = alpha.*mean(abs(residual{rxID}(sampleIdx, :, :, :)).^2);
-                            end
-                        end
-                        % residual > T;
-                    end
                     for currentIterationID = 1 : numberOfIterations
                         switch obj.processingAlgorithm
                             case 1
@@ -635,7 +669,19 @@ classdef spu < handle
                             case 6
                                 integratedSignal = sum(abs(pagemtimes(dict, 'ctranspose', residual, 'none')).^2, [3 4]); % noncoherent integration
                         end
-                        [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
+                        preDetectionSuccessful = true;
+                        if isempty(preDetectionCellIDs)
+                            [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
+                        else
+                            if ~isempty(preDetectionCellIDs{mcID})
+                                [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal(preDetectionCellIDs{mcID}), [], 1);
+                                cellID = preDetectionCellIDs{mcID}(maxIndex);
+                            else
+                                % [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
+                                fprintf('pre detection is unsuccessful at all nodes\n');
+                                preDetectionSuccessful = false;
+                            end
+                        end
                         residualPowerHistory(currentIterationID) = sum(abs(residual).^2, 'all');
                         if obj.saveResiduals
                             report(fusionID, mcID).integratedSignals(:, currentIterationID) = integratedSignal; % Ni x 1
@@ -648,9 +694,24 @@ classdef spu < handle
                         %     thresholdReached = true;
                         %     break;
                         % end
-                        if maximumPowerHistory(currentIterationID) < targetThreshold
+                        if ~preDetectionSuccessful
                             thresholdReached = true;
                             break;
+                        end
+                        if config.prePFA ~= 1 && config.numberOfNodesAdaptive
+                            numberOfUtilizedNodes = preDetectionNumberOfNodes(cellID, mcID);
+                            if numberOfUtilizedNodes ~= obj.network.numberOfActiveBistaticPairs
+                                fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
+                            end
+                            if maximumPowerHistory(currentIterationID) < targetThresholdAdaptive(numberOfUtilizedNodes)
+                                thresholdReached = true;
+                                break;
+                            end
+                        else
+                            if maximumPowerHistory(currentIterationID) < targetThreshold
+                                thresholdReached = true;
+                                break;
+                            end
                         end
                         if ismember(cellID, visibleCellIDset(1 : currentIterationID - 1))
                             % warning('same cellID with previous iteration');
@@ -1385,6 +1446,7 @@ classdef spu < handle
                 obj
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
                 options.prePFA (1, 1) double {mustBeNonnegative} = obj.configuration.prePFA
+                options.numberOfNodesAdaptive (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.numberOfNodesAdaptive, [0, 1])} = obj.configuration.numberOfNodesAdaptive
                 options.numberOfTargets (1, 1) double = obj.configurationCompression.numberOfTargets
                 options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
                 options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
@@ -1396,6 +1458,7 @@ classdef spu < handle
             end
             obj.configuration.PFA = options.PFA;
             obj.configuration.prePFA = options.prePFA;
+            obj.configuration.numberOfNodesAdaptive = options.numberOfNodesAdaptive;
             obj.configurationCompression.numberOfTargets = options.numberOfTargets;
             obj.configurationCompression.neighbourOffset = options.neighbourOffset;
             obj.processingAlgorithm = options.processingAlgorithm;

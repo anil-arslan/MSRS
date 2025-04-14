@@ -5,8 +5,8 @@ addpath(genpath([pwd '/library']));
 d = 1e3;
 posMonostatic = [0; 0; 0];
 % posMultistatic = [posMonostatic, [0 -2*d 2*d; 0 d d; 0 0 0]];
-% posMultistatic = [[-2*d -d; 0 0; 0 0], posMonostatic, [d 2*d; 0 0; 0 0]];
-posMultistatic = [[-d -0.7*d; sqrt(3)*d 0.7*d; 0 0], posMonostatic, [0.7*d d; 0.7*d sqrt(3)*d; 0 0]];
+posMultistatic = [[-2*d -d; 0 0; 0 0], posMonostatic, [d 2*d; 0 0; 0 0]];
+% posMultistatic = [[-d -0.7*d; sqrt(3)*d 0.7*d; 0 0], posMonostatic, [0.7*d d; 0.7*d sqrt(3)*d; 0 0]];
 
 arrayRX = planarArray( ...
     "numberOfElements", [11 1], ...
@@ -22,7 +22,7 @@ receivers = receivingNode( ...
     'position', posMultistatic, ...
     'array', arrayRX, ...
     'samplingFrequency', 2e6, ... 5e6, ... 2e7
-    'CPIsecond', 10e-6); % 15e-6
+    'CPIsecond', 15e-6); % 15e-6
 % receivers.settingsreceiver("beamformingMode", "bypass");
 % receivers.setbeamcenters("beamCentersAzimuth", -5 : 5 : 5);
 
@@ -50,8 +50,8 @@ transmitterArrays.setorientation("yaw", 90);
 receiverArrays.setorientation("yaw", 90);
 receiverArrays.setorientation( ...
     "yaw", [30 45 90 135 150]);
-receiverArrays.setscanparameters("backOfArrayRegion", 340);
-transmitterArrays.setscanparameters("backOfArrayRegion", 340);
+receiverArrays.setscanparameters("backOfArrayRegion", 90);
+transmitterArrays.setscanparameters("backOfArrayRegion", 180);
 
 network = radarNetwork( ...
     'receivingNodes', receivers, ...
@@ -83,6 +83,7 @@ targets = target( ...
     ...'position', [d/2; d/2; 0], ...
     ...'position', [0; 1; 0], ... straddle loss
     ...'position', [-150; 550; 0], ... straddle loss
+    'position', [0; 600; 0], ... on cell w/out straddle
     'meanRCS_dbsm', 0, ...
     'velocity', [0; -0*d/2; 0]);
 int = interface( ...
@@ -155,19 +156,68 @@ targets = target( ...
     'position', [-120; 50; 0], ... straddle loss
     ...'position', [0; 1; 0], ... straddle loss
     ...'position', [-150; 550; 0], ... straddle loss
-    'position', [500; 500; 0], ... on cell w/out straddle
-    ...'position', [0; 600; 0], ... on cell w/out straddle
-    'meanRCS_dbsm', 0);
+    ...'position', [500; 500; 0], ... on cell w/out straddle
+    'position', [0; 600; 0], ... on cell w/out straddle
+    ...'position', [-100; 800; 0], ... straddle loss
+    'meanRCS_dbsm', -6);
+    %%% sampling straddle loss is not known
 int.settargets(targets)
 clc;
 sp.configure( ...
     "seed", 0, ...
+    'prePFA', 1, ...
+    'prePFA', 0.05, ...
+    'numberOfNodesAdaptive', 1, ...
     "numberOfTrials", 1, ...
-    "numberOfTrialsParallel", 1000);
+    "numberOfTrialsParallel", 1000 ...
+    );
 sp.simulatedetection( ...
     "onCellCenters", 1);
-close all;
+% close all;
 sp.visualizeresolutionsimulation;
+
+thDiffdB = 10*log10(gammaincinv(sp.configuration.PFA, network.numberOfActiveBistaticPairs, 'upper')/gammaincinv(sp.configuration.prePFA, network.numberOfActiveBistaticPairs, 'upper'));
+cohGain = 10*log10(network.numberOfActiveBistaticPairs);
+% non coh daha dusuk
+
+% node sayisi non coherent integration sonrasi kullanilacak thresholdu
+% yukseltmekte
+% pre detection sirasinda 5 nodedan 2 tanesinde detection cikmaz ise
+% threshold degeri gammaincinv(PFA, 5, 'upper') yerine
+% gammaincinv(PFA, 3, 'upper') olarak hesaplanabilir
+% 10*log10(gammaincinv(1e-6, 5, 'upper')) = 13.698
+% 10*log10(gammaincinv(1e-6, 3, 'upper')) = 12.817
+% 0.88104 dB fark olusmakta
+
+%%%%%% Kritik
+% numberOfNodesAdaptive yapildiginda 3 node da detection ciksada
+% 5 nodedaki powerlar toplanmakta
+% ilgisiz nodelari sifirlayip topla
+% rapor yazalim
+% farkli geometri
+% straddle loss
+% farkli hedef konumlari
+
+SNR = mean(sp.outputSNR_lin);
+PFA = 1e-6;
+pd5 = sp.ROC(PFA, SNR, 5);
+pd4 = sp.ROC(PFA, SNR, 4);
+pd3 = sp.ROC(PFA, SNR, 3);
+pd2 = sp.ROC(PFA, SNR, 2);
+pd1 = sp.ROC(PFA, SNR, 1); % PFA.^(1./(1 + SNR))
+
+N = 3;
+T = sp.threshold(PFA, N);
+% gammaincinv(PFA, N, 'upper')
+% for N = 1
+% -ln(PFA)
+extraTerm = sum((T./(1 + SNR/N)).^(shiftdim(0 : N - 1, -3))./factorial(shiftdim(0 : N - 1, -3)), 5);
+% sigma (T/(1 + SNR/N)^k/)k!
+% extraTerm is correct for same SNR at all nodes
+pd1_ = exp(-T./(1 + SNR/N)).*extraTerm;
+% e^(-T/(1 + SNR/N))* sigma (T/(1 + SNR/N)^k/)k!
+% for N = 1
+% e^(-T/(1 + SNR/N)) = PFA^(1/(1 + SNR))
 
 %% coverage simulation
 
