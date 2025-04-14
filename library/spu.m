@@ -12,6 +12,7 @@ classdef spu < handle
             'PFA', 1e-6, ...
             'PD', 1, ...
             'numberOfNodesAdaptive', false, ...
+            'nullPreDetectionNodes', false, ...
             'threshold', 0, ...
             'thresholdAdaptive', 0, ...
             'threshold_dB', -inf, ...
@@ -131,7 +132,8 @@ classdef spu < handle
             'PFA', [], ...
             'SNRsMean', [], ...
             'SNRmodeled', [], ...
-            'PDmodeled', []);
+            'PDmodeled', [], ...
+            'numberOfUtilizedNodes', []);
     end
 
     properties (Access = private)
@@ -530,7 +532,8 @@ classdef spu < handle
                 'integratedSignals', [], ...
                 'complexAmplitudes', [], ...
                 'residualPowerHistory', [], ...
-                'maximumPowerHistory', []);
+                'maximumPowerHistory', [], ...
+                'numberOfUtilizedNodes', []);
             report = repmat(report, Nfus, mc.numberOfTrialsParallel);
             for fusionID = 1 : Nfus
                 switch obj.network.networkMode
@@ -555,6 +558,7 @@ classdef spu < handle
                 end
                 Nc = size(dict, 2); % number of cells
                 if config.prePFA ~= 1
+                    preDetection = true;
                     targetThresholdAdaptive = config.thresholdAdaptive;
                     NTC = obj.configurationMonostatic.numberOfTrainingCells;
                     NGC = obj.configurationMonostatic.numberOfGuardCells;
@@ -602,14 +606,27 @@ classdef spu < handle
                             end
                         end
                     end
-                    preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
-                    preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
-                    for mcID = 1 : mc.numberOfTrialsParallel
-                        preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nc x Nrx x Ntx matrix
-                        preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
-                        preDetectionNumberOfNodes(:, mcID) = sum(preDetectionIndices, [1 2]); % Nc x Nmcp
+                    if config.numberOfNodesAdaptive
+                        preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
+                        preDetectionNodeIDs = cell(Nc, mc.numberOfTrialsParallel);
+                        % preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
+                        for mcID = 1 : mc.numberOfTrialsParallel
+                            preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nrx x Ntx x Nc matrix
+                            preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
+                            for cellID = 1 : Nc
+                                preDetectionNodeIDs{cellID, mcID} = find(preDetectionIndices(:, :, cellID)); % Nc x Nmcp cell
+                                % preDetectionNumberOfNodes(cellID, mcID) = numel(preDetectionNodeIDs{cellID, mcID}); % Nc x Nmcp matrix
+                            end
+                        end
+                    else
+                        preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
+                        for mcID = 1 : mc.numberOfTrialsParallel
+                            preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nrx x Ntx x Nc matrix
+                            preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
+                        end
                     end
                 else
+                    preDetection = false;
                     preDetectionCellIDs = {};
                 end
                 if isnan(obj.configurationCompression.numberOfTargets)
@@ -637,6 +654,7 @@ classdef spu < handle
                         %%% not implemented
                         % report = CoSaMP(dict, measurements(:), obj.configurationCompression.numberOfTargets);
                 end
+                % figure(100); plot(preDetectionNumberOfNodes(:, 1));
                 for mcID = 1 : mc.numberOfTrialsParallel
                     orthonormalAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
                     normalizedAtomSet = zeros(numOfSamples, numberOfIterations, numOfParallelOpts);
@@ -650,31 +668,64 @@ classdef spu < handle
                     thresholdReached = false;
                     residual = permute(measurements(:, :, :, mcID), [1 4 2 3]); % (Ns x 1 x Nrxch x Ntxch) or (Ns*Nrxch*Ntxch x 1)
                     for currentIterationID = 1 : numberOfIterations
-                        switch obj.processingAlgorithm
-                            case 1
-                                integratedSignal = real(sum(w.*pagemtimes(dict, 'ctranspose', residual, 'none'), [3 4])); % coherent integration
-                                integratedSignal = sign(integratedSignal).*integratedSignal.^2;
-                            case 2
-                                integratedSignal = abs(sum(w.*pagemtimes(dict, 'ctranspose', residual, 'none'), [3 4])).^2; % coherent integration
-                                switch obj.network.networkMode
-                                    case 'monoStatic'
-                                        switch obj.network.activeReceivingNodes(fusionID).beamformingMode
-                                            case 'bypass'
-                                                integratedSignal = integratedSignal./Nrxch;
-                                            otherwise
-                                        end
-                                end
-                            case {3, 5}
-                                integratedSignal = sum(w.*abs(pagemtimes(dict, 'ctranspose', residual, 'none')).^2, [3 4]); % noncoherent integration
-                            case 6
-                                integratedSignal = sum(abs(pagemtimes(dict, 'ctranspose', residual, 'none')).^2, [3 4]); % noncoherent integration
-                        end
                         preDetectionSuccessful = true;
-                        if isempty(preDetectionCellIDs)
+                        if ~preDetection || (preDetection && ~config.numberOfNodesAdaptive)
+                            % predetection kapali ise veya acik bile olsa #nodes adaptive degilse
+                            projectedSignal = pagemtimes(dict, 'ctranspose', residual, 'none');
+                            switch obj.processingAlgorithm
+                                case 1
+                                    integratedSignal = real(sum(w.*projectedSignal, [3 4])); % coherent integration
+                                    integratedSignal = sign(integratedSignal).*integratedSignal.^2;
+                                    switch obj.network.networkMode
+                                        case 'monoStatic'
+                                            switch obj.network.activeReceivingNodes(fusionID).beamformingMode
+                                                case 'bypass'
+                                                    integratedSignal = integratedSignal./Nrxch;
+                                                otherwise
+                                            end
+                                    end
+                                case 2
+                                    integratedSignal = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
+                                case {3, 5}
+                                    integratedSignal = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                case 6
+                                    integratedSignal = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                            end
+                        else
+                            numberOfCells = numel(preDetectionCellIDs{mcID});
+                            integratedSignal = zeros(numberOfCells, 1);
+                            for cellIndex = 1 : numberOfCells
+                                cellID = preDetectionCellIDs{mcID}(cellIndex);
+                                if config.nullPreDetectionNodes
+                                    projectedSignal = pagemtimes(dict(:, cellID, preDetectionNodeIDs{cellID, mcID}), 'ctranspose', residual(:, 1, preDetectionNodeIDs{cellID, mcID}), 'none');
+                                else
+                                    projectedSignal = pagemtimes(dict(:, cellID, :), 'ctranspose', residual(:, 1, :), 'none');
+                                end
+                                switch obj.processingAlgorithm
+                                    case 1
+                                        integratedSignal(cellIndex, :) = real(sum(w.*projectedSignal, [3 4])); % coherent integration
+                                        integratedSignal(cellIndex, :) = sign(integratedSignal(cellIndex, :)).*integratedSignal(cellIndex, :).^2;
+                                    case 2
+                                        integratedSignal(cellIndex, :) = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
+                                    case {3, 5}
+                                        integratedSignal(cellIndex, :) = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                    case 6
+                                        integratedSignal(cellIndex, :) = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                end
+                            end
+                        end
+                        if ~preDetection
+                            % predetection kapali ise
                             [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
                         else
                             if ~isempty(preDetectionCellIDs{mcID})
-                                [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal(preDetectionCellIDs{mcID}), [], 1);
+                                if config.numberOfNodesAdaptive
+                                    % predetection acik ama #nodes adaptive
+                                    [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal, [], 1);
+                                else
+                                    % predetection acik ama #nodes adaptive degilse
+                                    [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal(preDetectionCellIDs{mcID}), [], 1);
+                                end
                                 cellID = preDetectionCellIDs{mcID}(maxIndex);
                             else
                                 % [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
@@ -695,19 +746,22 @@ classdef spu < handle
                         %     break;
                         % end
                         if ~preDetectionSuccessful
+                            report(fusionID, mcID).numberOfUtilizedNodes = 0;
                             thresholdReached = true;
                             break;
                         end
-                        if config.prePFA ~= 1 && config.numberOfNodesAdaptive
-                            numberOfUtilizedNodes = preDetectionNumberOfNodes(cellID, mcID);
+                        if preDetection && config.numberOfNodesAdaptive
+                            numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
+                            report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
                             if numberOfUtilizedNodes ~= obj.network.numberOfActiveBistaticPairs
-                                fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
+                                % fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
                             end
                             if maximumPowerHistory(currentIterationID) < targetThresholdAdaptive(numberOfUtilizedNodes)
                                 thresholdReached = true;
                                 break;
                             end
                         else
+                            report(fusionID, mcID).numberOfUtilizedNodes = Nrxch*Ntxrx;
                             if maximumPowerHistory(currentIterationID) < targetThreshold
                                 thresholdReached = true;
                                 break;
@@ -1447,6 +1501,7 @@ classdef spu < handle
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
                 options.prePFA (1, 1) double {mustBeNonnegative} = obj.configuration.prePFA
                 options.numberOfNodesAdaptive (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.numberOfNodesAdaptive, [0, 1])} = obj.configuration.numberOfNodesAdaptive
+                options.nullPreDetectionNodes (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.nullPreDetectionNodes, [0, 1])} = obj.configuration.nullPreDetectionNodes
                 options.numberOfTargets (1, 1) double = obj.configurationCompression.numberOfTargets
                 options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
                 options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
@@ -1459,6 +1514,7 @@ classdef spu < handle
             obj.configuration.PFA = options.PFA;
             obj.configuration.prePFA = options.prePFA;
             obj.configuration.numberOfNodesAdaptive = options.numberOfNodesAdaptive;
+            obj.configuration.nullPreDetectionNodes = options.nullPreDetectionNodes;
             obj.configurationCompression.numberOfTargets = options.numberOfTargets;
             obj.configurationCompression.neighbourOffset = options.neighbourOffset;
             obj.processingAlgorithm = options.processingAlgorithm;
@@ -1550,11 +1606,13 @@ classdef spu < handle
                 'PFA', [], ...
                 'SNRsMean', [], ...
                 'SNRmodeled', [], ...
-                'PDmodeled', []);
+                'PDmodeled', [], ...
+                'numberOfUtilizedNodes', []);
             obj.resolutionSimulationReport.PD = zeros(prod(obj.gridSize), 1);
             obj.resolutionSimulationReport.SNRmodeled = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
             obj.resolutionSimulationReport.PDmodeled = obj.ROC(config.PFA, 10.^(.1*obj.resolutionSimulationReport.SNRmodeled(:)), obj.network.numberOfActiveBistaticPairs);
             obj.resolutionSimulationReport.SNRsMean = zeros(prod(obj.gridSize), 1);
+            obj.resolutionSimulationReport.numberOfUtilizedNodes = zeros(prod(obj.gridSize), 1);
             for mcID = 1 : mc.numberOfTrials
                 if ~options.onCellCenters
                     obj.interfaces.settargetpositions("width", width);
@@ -1574,6 +1632,7 @@ classdef spu < handle
                             targetCellIDs = idx{mcpID};
                             obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
                             obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : end - 1);
+                            obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) = obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) + obj.compressionReport(1, mcpID).numberOfUtilizedNodes;
                         end
                     case 'monoStatic'
                         for mcpID = 1 : mc.numberOfTrialsParallel
@@ -1602,6 +1661,7 @@ classdef spu < handle
             end
             obj.resolutionSimulationReport.SNRsMean = 10*log10(obj.resolutionSimulationReport.SNRsMean./obj.resolutionSimulationReport.PD/numberOfTotalTrials);
             obj.resolutionSimulationReport.SNRsMean(~logical(obj.resolutionSimulationReport.PD)) = -inf;
+            obj.resolutionSimulationReport.numberOfUtilizedNodes = obj.resolutionSimulationReport.numberOfUtilizedNodes./(obj.resolutionSimulationReport.PD*numberOfTotalTrials);
             function cleanupFunction(obj, originalNumberOfTargets, previousCompressionReport)
                 obj.compressionReport = previousCompressionReport;
                 obj.interfaces.settargetpositions("width", 0);
@@ -1637,6 +1697,7 @@ classdef spu < handle
             SNRmodeled = obj.resolutionSimulationReport.SNRmodeled(:, options.monoStaticNetworkRXID);
             PD = reshape(obj.resolutionSimulationReport.PD(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
             SNRsMean = reshape(obj.resolutionSimulationReport.SNRsMean(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            numberOfUtilizedNodes = reshape(obj.resolutionSimulationReport.numberOfUtilizedNodes(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
 
 
             if ~isempty(obj.interfaces.targets)
@@ -1663,7 +1724,7 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(3).Value = PD;
             hold on;
             if ~isempty(obj.interfaces.targets)
-                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
+                plot(x(1, :), x(2, :), '+g', 'LineWidth', 2);
             end
             plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
             plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
@@ -1696,6 +1757,34 @@ classdef spu < handle
             plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
+            if ~exist(savePath, 'file') && options.saveFigures
+                savefig(fig, savePath);
+            end
+
+
+            fig = figure;
+            img = imagesc(x1, x2, numberOfUtilizedNodes);
+            colorbar; colormap('default');
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            set(img, 'AlphaData', visibleZone & ~isnan(numberOfUtilizedNodes));
+            delete(datatip(img, 2, 2));
+            grid off; grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel);
+            title('number of utilized nodes averaged over trials'); hold off;
+            img.DataTipTemplate.DataTipRows(1).Label = "x";
+            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            img.DataTipTemplate.DataTipRows(2).Label = "y";
+            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            img.DataTipTemplate.DataTipRows(3).Label = "mean #nodes";
+            img.DataTipTemplate.DataTipRows(3).Value = numberOfUtilizedNodes;
+            hold on;
+            if ~isempty(obj.interfaces.targets)
+                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
+            end
+            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            hold off; drawnow;
+            savePath = fullfile(options.saveDirectory, 'numberOfUtilizedNodes.fig');
             if ~exist(savePath, 'file') && options.saveFigures
                 savefig(fig, savePath);
             end
