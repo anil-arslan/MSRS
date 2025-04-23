@@ -175,10 +175,14 @@ sp.configure( ...
     "numberOfTrials", 1, ...
     "numberOfTrialsParallel", 1000 ...
     );
+% sp.configuration.preThreshold
 sp.simulatedetection( ...
-    "onCellCenters", 1);
+    "randomOnCell", 0, ...
+    "numberOfTargets", 1);
 % close all;
 sp.visualizeresolutionsimulation;
+
+%%
 
 figure(1);
 ylim([-0.1, 1]);
@@ -212,6 +216,12 @@ cohGain = 10*log10(network.numberOfActiveBistaticPairs);
 % farkli geometri
 % straddle loss
 % farkli hedef konumlari
+
+%%%%%%
+% CFAR yapmayalım
+% ikinci iterasyona dikkat edelim.
+% single target icin ilk katmayalim.
+% true detection mapping !!
 
 SNR = mean(sp.outputSNR_lin);
 PFA = 1e-6;

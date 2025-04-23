@@ -16,7 +16,7 @@ classdef spu < handle
             'threshold', 0, ...
             'thresholdAdaptive', 0, ...
             'threshold_dB', -inf, ...
-            'thresholdAdaptive_dB', 0, ...
+            'thresholdAdaptive_dB', -inf, ...
             'prePFA', 1, ...
             'preThreshold', 0, ...
             'preThreshold_dB', -inf);
@@ -60,6 +60,7 @@ classdef spu < handle
         %   Spatially independent phase and amplitude
         %   For generalized LRT, it is optimal adaptive processing algorithm
         detectionAlgorithm (1, 1) string {mustBeMember(detectionAlgorithm, ["thresholding", "peak", "CoSaMP", "OMP", "OMPjoint"])} = "thresholding"
+        preDetectionAlgorithm (1, 1) string {mustBeMember(preDetectionAlgorithm, ["thresholding", "OSCFAR"])} = "thresholding"
     end
 
     properties (Dependent)
@@ -587,19 +588,25 @@ classdef spu < handle
                                 signalChannel = measurements(:, rxID, txID, mcID);
                                 signalChannel(isinf(signalChannel)) = 0;
                                 preMatchFilteredSignal = conv(signalChannel, matchFilter);
-                                numberOfSamples = size(preMatchFilteredSignal, 1);
-                                preThresholdCFAR = zeros(numberOfSamples, 1);
-                                for sampleID = 1 : numberOfSamples % OSCFAR
-                                    trainingStart = sampleID + NGC + 1;
-                                    upperTraining = unique(min(trainingStart : trainingStart + NTC - 1, numberOfSamples));
-                                    trainingStart = sampleID - NGC - 1;
-                                    lowerTraining = unique(max(trainingStart - NTC + 1 : trainingStart, 1));
-                                    trainingCellIDs = [lowerTraining, upperTraining];
-                                    numberOfTrainingCells = length(trainingCellIDs);
-                                    alpha = numberOfTrainingCells.*(config.prePFA.^(-1/numberOfTrainingCells) - 1);
-                                    preThresholdCFAR(sampleID) = alpha.*mean(abs(preMatchFilteredSignal(trainingCellIDs)).^2);
-                                end 
-                                detectionIndices = find(abs(preMatchFilteredSignal).^2 > preThresholdCFAR);
+                                switch obj.preDetectionAlgorithm
+                                    case 'thresholding'
+                                        preThreshold = config.preThreshold;
+                                    case 'OSCFAR'
+                                        numberOfSamples = size(preMatchFilteredSignal, 1);
+                                        preThreshold = zeros(numberOfSamples, 1);
+                                        for sampleID = 1 : numberOfSamples % OSCFAR
+                                            trainingStart = sampleID + NGC + 1;
+                                            upperTraining = unique(min(trainingStart : trainingStart + NTC - 1, numberOfSamples));
+                                            trainingStart = sampleID - NGC - 1;
+                                            lowerTraining = unique(max(trainingStart - NTC + 1 : trainingStart, 1));
+                                            trainingCellIDs = [lowerTraining, upperTraining];
+                                            numberOfTrainingCells = length(trainingCellIDs);
+                                            alpha = numberOfTrainingCells.*(config.prePFA.^(-1/numberOfTrainingCells) - 1);
+                                            preThreshold(sampleID) = alpha.*mean(abs(preMatchFilteredSignal(trainingCellIDs)).^2);
+                                        end
+
+                                end
+                                detectionIndices = find(abs(preMatchFilteredSignal).^2 > preThreshold);
                                 dictionaryCellIndices{rxID, txID, mcID} = ismember(obj.integrationIndices(txID, rxID, :), detectionIndices);
                                 % figure; plot(20*log10(abs(preMatchFilteredSignal)));
                                 % hold on; plot(10*log10(preThresholdCFAR));
@@ -751,8 +758,12 @@ classdef spu < handle
                             break;
                         end
                         if preDetection && config.numberOfNodesAdaptive
-                            numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
-                            report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
+                            if currentIterationID == 1
+                                numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
+                                report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
+                                report(fusionID, mcID).numberOfPreDetections = false(Nrxch*Ntxrx, 1);
+                                report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
+                            end
                             if numberOfUtilizedNodes ~= obj.network.numberOfActiveBistaticPairs
                                 % fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
                             end
@@ -762,6 +773,7 @@ classdef spu < handle
                             end
                         else
                             report(fusionID, mcID).numberOfUtilizedNodes = Nrxch*Ntxrx;
+                            report(fusionID, mcID).numberOfPreDetections = true(Nrxch*Ntxrx, 1);
                             if maximumPowerHistory(currentIterationID) < targetThreshold
                                 thresholdReached = true;
                                 break;
@@ -1506,6 +1518,7 @@ classdef spu < handle
                 options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
                 options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
                 options.detectionAlgorithm (1, 1) string {mustBeMember(options.detectionAlgorithm, ["thresholding", "peak", "CoSaMP", "OMP", "OMPjoint"])} = obj.detectionAlgorithm
+                options.preDetectionAlgorithm (1, 1) string {mustBeMember(options.preDetectionAlgorithm, ["thresholding", "OSCFAR"])} = obj.preDetectionAlgorithm
                 options.numberOfTrials (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrials
                 options.numberOfTrialsParallel (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrialsParallel
                 options.seed (1, 1) {mustBeNonnegative, mustBeInteger, mustBeLessThan(options.seed, 4294967296)} = 0
@@ -1529,6 +1542,7 @@ classdef spu < handle
                     end
             end
             obj.detectionAlgorithm = options.detectionAlgorithm;
+            obj.preDetectionAlgorithm = options.preDetectionAlgorithm;
             mc = obj.monteCarlo;
             mc.numberOfTrials = options.numberOfTrials;
             mc.numberOfTrialsParallel = options.numberOfTrialsParallel;
@@ -1588,7 +1602,8 @@ classdef spu < handle
         function simulatedetection(obj, options)
             arguments
                 obj
-                options.onCellCenters (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.onCellCenters, [0, 1])} = 0; 
+                options.randomOnCell (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.randomOnCell, [0, 1])} = 0
+                options.numberOfTargets (1, 1) double {mustBePositive} = inf
             end
             config = obj.configuration;
             mc = obj.monteCarlo;
@@ -1613,8 +1628,9 @@ classdef spu < handle
             obj.resolutionSimulationReport.PDmodeled = obj.ROC(config.PFA, 10.^(.1*obj.resolutionSimulationReport.SNRmodeled(:)), obj.network.numberOfActiveBistaticPairs);
             obj.resolutionSimulationReport.SNRsMean = zeros(prod(obj.gridSize), 1);
             obj.resolutionSimulationReport.numberOfUtilizedNodes = zeros(prod(obj.gridSize), 1);
+            obj.resolutionSimulationReport.numberOfPreDetections = zeros(obj.network.numberOfActiveBistaticPairs, 1);
             for mcID = 1 : mc.numberOfTrials
-                if ~options.onCellCenters
+                if options.randomOnCell
                     obj.interfaces.settargetpositions("width", width);
                 end
                 switch obj.detectionAlgorithm
@@ -1629,11 +1645,12 @@ classdef spu < handle
                 switch obj.network.networkMode
                     case 'multiStatic'
                         for mcpID = 1 : mc.numberOfTrialsParallel
-                            targetCellIDs = idx{mcpID};
+                            targetCellIDs = idx{mcpID}(1 : min(end, ceil(options.numberOfTargets)));
                             obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
-                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : end - 1);
-                            obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) = obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) + obj.compressionReport(1, mcpID).numberOfUtilizedNodes;
+                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : min(end - 1, ceil(options.numberOfTargets)));
+                            obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) = obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) + obj.compressionReport(1, mcpID).numberOfUtilizedNodes(1 : min(end, ceil(options.numberOfTargets)));
                         end
+                        obj.resolutionSimulationReport.numberOfPreDetections = sum([obj.compressionReport.numberOfPreDetections], 2);
                     case 'monoStatic'
                         for mcpID = 1 : mc.numberOfTrialsParallel
                             targetCellIDs = cell(1, obj.network.numberOfParallelSignalFusions);
@@ -1715,7 +1732,7 @@ classdef spu < handle
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            title('Probability of detection', sprintf('modeled P_d = %g', PDmodeled)); hold off;
+            title(sprintf('Probability of detection (total P_d = %g)', sum(PD, 'all')), sprintf('modeled P_d = %g', PDmodeled)); hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
@@ -1783,6 +1800,10 @@ classdef spu < handle
             end
             plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
             plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            text(posRX(1, :), posRX(2, :), num2str(obj.resolutionSimulationReport.numberOfPreDetections), ...
+                "FontWeight", "normal", ...
+                "VerticalAlignment", "bottom", ...
+                "HorizontalAlignment", "left");
             hold off; drawnow;
             savePath = fullfile(options.saveDirectory, 'numberOfUtilizedNodes.fig');
             if ~exist(savePath, 'file') && options.saveFigures

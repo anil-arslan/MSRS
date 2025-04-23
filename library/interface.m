@@ -1144,24 +1144,34 @@ classdef interface < handle
                 case "target"
                     x = obj.ellipse(1, :, :, :, options.targetID, options.trialID)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
                     y = obj.ellipse(2, :, :, :, options.targetID, options.trialID)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
-                    lineSpecs = {'.'};
                 case "resolution"
                     x = obj.ellipseResolution(1, :, :, :, options.targetID, options.trialID, :)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp x 2 matrix)
                     y = obj.ellipseResolution(2, :, :, :, options.targetID, options.trialID, :)/1e3; % (3 x Nscan x Ntx x Nrx x Nt x Nmcp x 2 matrix)
-                    lineSpecs = {'.r', '.b'};
             end
             xTarget = obj.positions(1, options.targetID, options.trialID)/1e3;
             yTarget = obj.positions(2, options.targetID, options.trialID)/1e3;
             figure; hold on;
             grid off; grid on; grid minor;
-            for curveID = 1 : length(lineSpecs)
-                for rxID = 1 : obj.numberOfReceivingNodes
-                    for txID = 1 : obj.numberOfTransmittingNodes
-                        plot(x(:, :, txID, rxID, :, :, curveID), y(:, :, txID, rxID, :, :, curveID), lineSpecs{curveID});
+            for rxID = 1 : obj.numberOfReceivingNodes
+                for txID = 1 : obj.numberOfTransmittingNodes
+                    switch options.ellipseType
+                        case "target"
+                            plot(x(:, :, txID, rxID, :, :), y(:, :, txID, rxID, :, :));
+                        case "resolution"
+                            xPlot = [x(:, :, txID, rxID, :, :, 1), fliplr(x(:, :, txID, rxID, :, :, 2))];
+                            yPlot = [y(:, :, txID, rxID, :, :, 1), fliplr(y(:, :, txID, rxID, :, :, 2))];
+                            patch(xPlot, yPlot, 'r', 'FaceAlpha', 0.2);
                     end
                 end
             end
-            plot(xTarget, yTarget, 'ok', 'LineWidth', 2, 'MarkerSize', 20);
+            switch options.ellipseType
+                case "target"
+                    plot(xTarget, yTarget, 'ok', 'LineWidth', 2, 'MarkerSize', 20);
+                    title('iso bistatic range ellipse of the target');
+                case "resolution"
+                    plot(xTarget, yTarget, 'k*', 'LineWidth', 6, 'MarkerSize', 10);
+                    title('resolution ellipses of the target');
+            end
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
         end
 
