@@ -11,8 +11,8 @@ classdef spu < handle
         configuration (1, 1) struct = struct( ...
             'PFA', 1e-6, ...
             'PD', 1, ...
+            'numberOfStrongestNodes', 0, ...
             'numberOfNodesAdaptive', false, ...
-            'nullPreDetectionNodes', false, ...
             'threshold', 0, ...
             'thresholdAdaptive', 0, ...
             'threshold_dB', -inf, ...
@@ -703,21 +703,25 @@ classdef spu < handle
                             integratedSignal = zeros(numberOfCells, 1);
                             for cellIndex = 1 : numberOfCells
                                 cellID = preDetectionCellIDs{mcID}(cellIndex);
-                                if config.nullPreDetectionNodes
-                                    projectedSignal = pagemtimes(dict(:, cellID, preDetectionNodeIDs{cellID, mcID}), 'ctranspose', residual(:, 1, preDetectionNodeIDs{cellID, mcID}), 'none');
+                                projectedSignal = pagemtimes(dict(:, cellID, preDetectionNodeIDs{cellID, mcID}), 'ctranspose', residual(:, 1, preDetectionNodeIDs{cellID, mcID}), 'none');
+                                if ~config.numberOfStrongestNodes
+                                    switch obj.processingAlgorithm
+                                        case 1
+                                            integratedSignal(cellIndex, :) = real(sum(w.*projectedSignal, [3 4])); % coherent integration
+                                            integratedSignal(cellIndex, :) = sign(integratedSignal(cellIndex, :)).*integratedSignal(cellIndex, :).^2;
+                                        case 2
+                                            integratedSignal(cellIndex, :) = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
+                                        case {3, 5}
+                                            integratedSignal(cellIndex, :) = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                        case 6
+                                            integratedSignal(cellIndex, :) = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                    end
                                 else
-                                    projectedSignal = pagemtimes(dict(:, cellID, :), 'ctranspose', residual(:, 1, :), 'none');
-                                end
-                                switch obj.processingAlgorithm
-                                    case 1
-                                        integratedSignal(cellIndex, :) = real(sum(w.*projectedSignal, [3 4])); % coherent integration
-                                        integratedSignal(cellIndex, :) = sign(integratedSignal(cellIndex, :)).*integratedSignal(cellIndex, :).^2;
-                                    case 2
-                                        integratedSignal(cellIndex, :) = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
-                                    case {3, 5}
-                                        integratedSignal(cellIndex, :) = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
-                                    case 6
-                                        integratedSignal(cellIndex, :) = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                    switch obj.processingAlgorithm
+                                        case 6
+                                            [projectedSignalPowers, strongestNodeIDs] = sort(sort(abs(projectedSignal).^2, 4), 3);
+                                            integratedSignal(cellIndex, :) = sum(projectedSignalPowers(:, :, min(end, config.numberOfStrongestNodes), :), [3 4]); % noncoherent integration
+                                    end
                                 end
                             end
                         end
@@ -759,10 +763,15 @@ classdef spu < handle
                         end
                         if preDetection && config.numberOfNodesAdaptive
                             if currentIterationID == 1
-                                numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
-                                report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
                                 report(fusionID, mcID).numberOfPreDetections = false(Nrxch*Ntxrx, 1);
-                                report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
+                                if ~config.numberOfStrongestNodes
+                                    numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
+                                    report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
+                                else
+                                    numberOfUtilizedNodes = min(numel(preDetectionNodeIDs{cellID, mcID}), config.numberOfStrongestNodes);
+                                    report(fusionID, mcID).numberOfPreDetections(strongestNodeIDs) = true;
+                                end
+                                report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
                             end
                             if numberOfUtilizedNodes ~= obj.network.numberOfActiveBistaticPairs
                                 % fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
@@ -1513,7 +1522,7 @@ classdef spu < handle
                 options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
                 options.prePFA (1, 1) double {mustBeNonnegative} = obj.configuration.prePFA
                 options.numberOfNodesAdaptive (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.numberOfNodesAdaptive, [0, 1])} = obj.configuration.numberOfNodesAdaptive
-                options.nullPreDetectionNodes (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.nullPreDetectionNodes, [0, 1])} = obj.configuration.nullPreDetectionNodes
+                options.numberOfStrongestNodes (1, 1) {mustBeNonnegative, mustBeInteger} = obj.configuration.numberOfStrongestNodes
                 options.numberOfTargets (1, 1) double = obj.configurationCompression.numberOfTargets
                 options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
                 options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
@@ -1527,7 +1536,7 @@ classdef spu < handle
             obj.configuration.PFA = options.PFA;
             obj.configuration.prePFA = options.prePFA;
             obj.configuration.numberOfNodesAdaptive = options.numberOfNodesAdaptive;
-            obj.configuration.nullPreDetectionNodes = options.nullPreDetectionNodes;
+            obj.configuration.numberOfStrongestNodes = options.numberOfStrongestNodes;
             obj.configurationCompression.numberOfTargets = options.numberOfTargets;
             obj.configurationCompression.neighbourOffset = options.neighbourOffset;
             obj.processingAlgorithm = options.processingAlgorithm;

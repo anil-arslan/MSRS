@@ -199,27 +199,14 @@ thDiffdB = 10*log10(gammaincinv(sp.configuration.PFA, network.numberOfActiveBist
 cohGain = 10*log10(network.numberOfActiveBistaticPairs);
 % non coh daha dusuk
 
-% node sayisi non coherent integration sonrasi kullanilacak thresholdu
-% yukseltmekte
-% pre detection sirasinda 5 nodedan 2 tanesinde detection cikmaz ise
-% threshold degeri gammaincinv(PFA, 5, 'upper') yerine
-% gammaincinv(PFA, 3, 'upper') olarak hesaplanabilir
-% 10*log10(gammaincinv(1e-6, 5, 'upper')) = 13.698
-% 10*log10(gammaincinv(1e-6, 3, 'upper')) = 12.817
-% 0.88104 dB fark olusmakta
-
-%%%%%% Kritik
-% numberOfNodesAdaptive yapildiginda 3 node da detection ciksada
-% 5 nodedaki powerlar toplanmakta
-% ilgisiz nodelari sifirlayip topla
 % rapor yazalim
 % farkli geometri
 % straddle loss
 % farkli hedef konumlari
 
 %%%%%%
-% CFAR yapmayalım
 % ikinci iterasyona dikkat edelim.
+
 % single target icin ilk katmayalim.
 % true detection mapping !!
 
