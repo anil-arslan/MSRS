@@ -690,7 +690,7 @@ classdef radarNetwork < handle
             ax = gca; lims = [ax.XLim; ax.YLim; ax.ZLim];
             lims = [min(lims(:)), max(lims(:))];
             xlim(lims); ylim(lims); zlim(lims);
-            hold off; drawnow;
+            axis equal; hold off; drawnow;
         end
     end
 end

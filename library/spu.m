@@ -701,6 +701,9 @@ classdef spu < handle
                         else
                             numberOfCells = numel(preDetectionCellIDs{mcID});
                             integratedSignal = zeros(numberOfCells, 1);
+                            if config.numberOfStrongestNodes
+                                strongestNodeIDs = cell(Nc, 1);
+                            end
                             for cellIndex = 1 : numberOfCells
                                 cellID = preDetectionCellIDs{mcID}(cellIndex);
                                 projectedSignal = pagemtimes(dict(:, cellID, preDetectionNodeIDs{cellID, mcID}), 'ctranspose', residual(:, 1, preDetectionNodeIDs{cellID, mcID}), 'none');
@@ -719,8 +722,9 @@ classdef spu < handle
                                 else
                                     switch obj.processingAlgorithm
                                         case 6
-                                            [projectedSignalPowers, strongestNodeIDs] = sort(sort(abs(projectedSignal).^2, 4), 3);
-                                            integratedSignal(cellIndex, :) = sum(projectedSignalPowers(:, :, min(end, config.numberOfStrongestNodes), :), [3 4]); % noncoherent integration
+                                            [projectedSignalPowers, strongestNodeIndices] = sort(sort(abs(projectedSignal).^2, 4, 'descend'), 3, 'descend');
+                                            integratedSignal(cellIndex, :) = sum(projectedSignalPowers(:, :, 1 : min(end, config.numberOfStrongestNodes), :), [3 4]); % noncoherent integration
+                                            strongestNodeIDs{cellID} = preDetectionNodeIDs{cellID, mcID}(strongestNodeIndices(min(end, config.numberOfStrongestNodes)));
                                     end
                                 end
                             end
@@ -769,7 +773,7 @@ classdef spu < handle
                                     report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
                                 else
                                     numberOfUtilizedNodes = min(numel(preDetectionNodeIDs{cellID, mcID}), config.numberOfStrongestNodes);
-                                    report(fusionID, mcID).numberOfPreDetections(strongestNodeIDs) = true;
+                                    report(fusionID, mcID).numberOfPreDetections(strongestNodeIDs{cellID}) = true;
                                 end
                                 report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
                             end
@@ -977,8 +981,8 @@ classdef spu < handle
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
                 txID = obj.network.monoStaticTransmitterIDs(rxID);
-                L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                L = obj.network.pulseWidthSample(rxID, txID) - 1;
+                N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI - 1;
                 samples = -L : N;
                 numberOfSamples = length(samples);
                 T{rxID} = zeros(numberOfSamples, numberOfTotalChannels, mc.numberOfTrialsParallel);
@@ -1032,8 +1036,8 @@ classdef spu < handle
                         rotationMat = obj.network.receivingNodes(rxID).array.rotationMatrix;
                         origin = obj.network.receivingNodes(rxID).position;
                         txID = obj.network.monoStaticTransmitterIDs(rxID);
-                        L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                        Ns = N + L + 1;
+                        L = obj.network.pulseWidthSample(rxID, txID) - 1;
+                        Ns = N + L;
                         T = config.threshold*ones(Ns*numberOfTotalChannels, mc.numberOfTrialsParallel);
                         obs = obj.signalsMatchFiltered{rxID};
                         absObs = reshape(abs(obs), [], mc.numberOfTrialsParallel);
@@ -1452,8 +1456,8 @@ classdef spu < handle
                         case "continuous"
                             error('not implemented');
                         case "pulsed"
-                            L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                            L = obj.network.pulseWidthSample(rxID, txID) - 1;
+                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI - 1;
                     end
                     timeDelays = permute((-L : N)*Ts, [1 3 4 2]);
                     timeDifference = abs(hypothesizedTimeDelays(txID, rxID, :) - timeDelays); % (Ntx x Nrx x Ni matrix)
@@ -1735,6 +1739,7 @@ classdef spu < handle
 
             fig = figure;
             img = imagesc(x1, x2, PD);
+            xlim([-0.9 0.9]); ylim([0 1.8]);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             % set(img, 'AlphaData', visibleZone);
@@ -1760,36 +1765,37 @@ classdef spu < handle
                 savefig(fig, savePath);
             end
 
-            fig = figure;
-            img = imagesc(x1, x2, SNRsMean);
-            colorbar; colormap('default');
-            ax = gca; set(ax, 'Ydir', 'Normal');
-            set(img, 'AlphaData', visibleZone & ~isinf(SNRsMean));
-            delete(datatip(img, 2, 2));
-            grid off; grid on; grid minor;
-            xlabel(xLabel); ylabel(yLabel);
-            title('realized SNR with straddle loss averaged over trials', sprintf('modeled SNR = %g', SNRmodeled)); hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
-            hold on;
-            if ~isempty(obj.interfaces.targets)
-                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
-            end
-            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
-            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
-            hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
+            % fig = figure;
+            % img = imagesc(x1, x2, SNRsMean);
+            % colorbar; colormap('default');
+            % ax = gca; set(ax, 'Ydir', 'Normal');
+            % set(img, 'AlphaData', visibleZone & ~isinf(SNRsMean));
+            % delete(datatip(img, 2, 2));
+            % grid off; grid on; grid minor;
+            % xlabel(xLabel); ylabel(yLabel);
+            % title('realized SNR with straddle loss averaged over trials', sprintf('modeled SNR = %g', SNRmodeled)); hold off;
+            % img.DataTipTemplate.DataTipRows(1).Label = "x";
+            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            % img.DataTipTemplate.DataTipRows(2).Label = "y";
+            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            % img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            % img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
+            % hold on;
+            % if ~isempty(obj.interfaces.targets)
+            %     plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
+            % end
+            % plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+            % plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            % hold off; drawnow;
+            % savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
+            % if ~exist(savePath, 'file') && options.saveFigures
+            %     savefig(fig, savePath);
+            % end
 
 
             fig = figure;
             img = imagesc(x1, x2, numberOfUtilizedNodes);
+            xlim([-0.9 0.9]); ylim([0 1.8]);
             colorbar; colormap('default');
             ax = gca; set(ax, 'Ydir', 'Normal');
             set(img, 'AlphaData', visibleZone & ~isnan(numberOfUtilizedNodes));
@@ -2534,8 +2540,8 @@ classdef spu < handle
                         case "continuous"
                             error('not implemented');
                         case "pulsed"
-                            L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                            L = obj.network.pulseWidthSample(rxID, txID) - 1;
+                            N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI - 1;
                     end
                     t = (-L : N)*Ts*1e6;
                     if ~isscalar(options.receivingNodeIDs)
@@ -3056,8 +3062,8 @@ classdef spu < handle
                     case "continuous"
                         error('not implemented');
                     case "pulsed"
-                        L = obj.network.pulseWidthSample(rxID, txID) - 2;
-                        N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
+                        L = obj.network.pulseWidthSample(rxID, txID) - 1;
+                        N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI - 1;
                 end
                 t{rxID} = (-L : N)*obj.network.activeReceivingNodes(rxID).samplingPeriod*1e6;
             end
