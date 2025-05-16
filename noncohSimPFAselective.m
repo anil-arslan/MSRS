@@ -6,7 +6,7 @@ function globalThreshold = noncohSimPFAselective(M, PFA_local, PFA_global, num_t
     %   PFA_global   - desired global false alarm rate
     %   num_trials   - number of Monte Carlo trials
     % Output:
-    %   eta_empirical - empirically derived threshold achieving PFA_global
+    %   globalThreshold - empirically derived threshold achieving PFA_global
 
     % Local threshold
     localThreshold = -log(PFA_local);
@@ -16,8 +16,8 @@ function globalThreshold = noncohSimPFAselective(M, PFA_local, PFA_global, num_t
 
     for i = 1:num_trials
         Tm = exprnd(1, M, 1);              % T_m ~ Exp(1) under H0
-        % delta = Tm > localThreshold;                % apply local threshold
-        T_sel_H0(i) = sum(Tm + localThreshold);      % sum only passed values
+        delta = Tm > localThreshold;                % apply local threshold
+        T_sel_H0(i) = sum(Tm(delta) + localThreshold);      % sum only passed values
     end
 
     % Empirical threshold at (1 - P_FA) percentile
