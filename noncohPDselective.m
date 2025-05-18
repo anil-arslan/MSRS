@@ -34,7 +34,7 @@ function cdf_val = conditional_cdf_gamma_shifted(gamma, m, lambda, theta)
     if gamma < m*lambda
         cdf_val = 0;
     else
-        x = (gamma - m*lambda)./theta;
+        x = (gamma - m*lambda).*theta;
         cdf_val = gammainc(x, m, 'upper'); % MATLAB's Q(m, x)
     end
 end
