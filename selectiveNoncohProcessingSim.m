@@ -3,7 +3,7 @@ clc;
 
 M = 1 : 1 : 10;
 SNR_in_dB = 0 : 10; % dB
-PFA_local = 1;
+PFA_local = 1e-1;
 PFA_global = 1e-6;
 nmc = 1e4;
 
@@ -14,13 +14,13 @@ maxNrx = max(M);
 globalThresholdClosedForm = zeros(maxNrx, 1);
 globalPDanalytical= zeros(maxNrx, numSNR);
 for i = 1 : maxNrx
-    globalThresholdClosedForm(i) = noncohPFAselective(i, PFA_local/i, PFA_global);
+    globalThresholdClosedForm(i) = noncohPFAselective(i, PFA_local, PFA_global);
     for k = 1 : numSNR
-        globalPDanalytical(i, k) = noncohPDselective(i, PFA_local/i, globalThresholdClosedForm(i), 10.^(.1*SNR_in_dB(k)));
+        globalPDanalytical(i, k) = noncohPDselective(i, PFA_local, globalThresholdClosedForm(i), 10.^(.1*SNR_in_dB(k)));
     end
 end
 
-localThreshold = -log(PFA_local./M); % to fix data rate
+localThreshold = -log(PFA_local); % to fix data rate
 globalThresholdsChoosen = globalThresholdClosedForm;
 
 %% Simulation
@@ -36,7 +36,7 @@ for i = 1 : numRX
         s = x + n; % [M by 1]
 
     %%% selective processing PD simulation
-        ind = abs(s).^2 > localThreshold(i);
+        ind = abs(s).^2 > localThreshold;
         m = sum(ind, 1);
         LH1 = zeros(1, numSNR, nmc);
         for q = 1 : numSNR
@@ -47,7 +47,7 @@ for i = 1 : numRX
         PDselectiveProcessing(i, :) = sum(LH1 > globalThresholdsChoosen(M(i)), 3)/nmc;
 
     %%% selective processing PFA simulation
-        ind = abs(n).^2 > localThreshold(i);
+        ind = abs(n).^2 > localThreshold;
         m = sum(ind, 1);
         LH0 = zeros(1, 1, nmc);
         for mc = find(m ~= 0).'
