@@ -14,8 +14,9 @@ classdef detectorNoncoherent < handle
     %%% Fusion parameters
 
     properties (SetAccess = private, GetAccess = public)
-        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGN", "MRC"])} = "EGN"
+        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGN", "NEGN", "MRC"])} = "EGN"
         % EGN: Equal Gain Combining
+        % NEGN: Normalized Equal Gain Combining
         % MRC: Maximal Ratio Combining
     end
 
@@ -156,6 +157,8 @@ classdef detectorNoncoherent < handle
             switch obj.globalFusionRule
                 case "EGN"
                     f = @(x) sum(x, 1);
+                case "NEGN"
+                    f = @(x) mean(x, 1);
                 case "MRC"
             end
         end
@@ -265,6 +268,19 @@ classdef detectorNoncoherent < handle
 
         %%% set functions
 
+        function setalgorithm(obj, options)
+            arguments
+                obj
+                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGN", "NEGN", "MRC"])} = obj.globalFusionRule
+                % EGN: Equal Gain Combining
+                % NEGN: Normalized Equal Gain Combining
+                % MRC: Maximal Ratio Combining
+                options.localDataSent (1, 1) string {mustBeMember(options.localDataSent, ["power", "binary"])} = obj.localDataSent
+            end
+            obj.globalFusionRule = options.globalFusionRule;
+            obj.localDataSent = options.localDataSent;
+        end
+
         function setmontecarlo(obj, options)
             arguments
                 obj
@@ -279,9 +295,12 @@ classdef detectorNoncoherent < handle
             arguments
                 obj
                 options.constraint (1, :) string {mustBeMember(options.constraint, ["dataRate", "transmittedPower"])} = ["dataRate", "transmittedPower"]
+                options.numberOfTransmitters (1, :) double {mustBeNonnegative} = sqrt(obj.numberOfSensors)
             end
             if any(strcmp(options.constraint, "transmittedPower"))
                 for scanID = 2 : length(obj.numberOfSensors)
+                    % mustBeLessThanOrEqual(options.numberOfTransmitters(scanID), sqrt(obj.numberOfSensors(scanID)))
+                    % obj.SNR_input_dB{scanID} = repmat(10*log10(10.^(.1*obj.SNR_input_dB{1})*options.numberOfTransmitters(1)/options.numberOfTransmitters(scanID)), obj.numberOfSensors(scanID), 1);
                     obj.SNR_input_dB{scanID} = repmat(10*log10(10.^(.1*obj.SNR_input_dB{1})*obj.numberOfSensors(1)/obj.numberOfSensors(scanID)), obj.numberOfSensors(scanID), 1);
                 end
             end
@@ -325,7 +344,7 @@ classdef detectorNoncoherent < handle
                             localData = indicatorFunction; % [M x 1 x Nmc x Nlocal]
                     end
                     switch obj.globalFusionRule
-                        case "EGN"
+                        case {"EGN", "NEGN"}
                             dataSize = size(indicatorFunction, [2 3 4]);
                             globalTestStatisticsH0 = zeros([1, dataSize]);
                             for idx1 = 1 : dataSize(1)
@@ -351,7 +370,7 @@ classdef detectorNoncoherent < handle
                             localData = indicatorFunction; % [M x Nsnr x Nmc x Nlocal]
                     end
                     switch obj.globalFusionRule
-                        case "EGN"
+                        case {"EGN", "NEGN"}
                             dataSize = size(indicatorFunction, [2 3 4]);
                             globalTestStatisticsH1 = zeros([1, dataSize]);
                             for idx1 = 1 : dataSize(1)
@@ -372,221 +391,302 @@ classdef detectorNoncoherent < handle
             arguments
                 obj
                 options.dataType (1, :) string {mustBeMember(options.dataType, ["analytical", "empirical"])} = ["analytical", "empirical"]
-                options.x_axis (1, 1) string {mustBeMember(options.x_axis, ["globalPFA", "numberOfSensors", "SNR", "globalThreshold", "localPFA", "localThreshold", "localPD"])} = "numberOfSensors"
+                options.x_axis (1, :) string {mustBeMember(options.x_axis, ["globalPFA", "numberOfSensors", "SNR", "globalThreshold", "localPFA", "localThreshold", "localPD"])} = "numberOfSensors"
                 options.y_axis (1, 1) string {mustBeMember(options.y_axis, ["globalPFA", "globalPD"])} = "globalPD"
             end
-            plotFunc = @plot;
-            legendString = '';
-            legendTitleString = '';
-            switch options.x_axis
-                case "globalPFA"
-                    plotFunc = @semilogx;
-                    xData = obj.globalPFA; % [NpfaGlobal x 1]
-                    if isscalar(xData) || max(abs(diff(xData))) < eps
-                        fprintf('choose non-scalar x-axis \n');
-                        return
-                    end
-                    xLabel = 'P_{FA}^{global}';
-                    xTitle = xLabel;
-                    indexingPriority = ["numberOfSensors", "SNR"];
-                    legendPriority = "SNR";
-                    indexingTitle = [', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
-                case "numberOfSensors"
-                    xData = obj.numberOfSensors; % [1 x M]
-                    if isscalar(xData) || max(abs(diff(xData))) < eps
-                        fprintf('choose non-scalar x-axis \n');
-                        return
-                    end
-                    xLabel = '#sensors';
-                    xTitle = xLabel;
-                    indexingPriority = ["globalPFA", "localPFA"];
-                    legendPriority = "SNR";
-                    uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows');
-                    indexingTitle = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1)), ', P_{FA}^{local} = ', scinot(uniqueLocalPFA(1))];
-                case "SNR"
-                    uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows');
-                    xData = uniqueSNR; % [1 x Nsnr]
-                    if isscalar(xData) || max(abs(diff(xData))) < eps
-                        fprintf('choose non-scalar x-axis \n');
-                        return
-                    end
-                    xLabel = 'SNR_{in} (dB)';
-                    xTitle = xLabel;
-                    indexingPriority = ["globalPFA", "localPFA"];
-                    legendPriority = "numberOfSensors";
-                    uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows');
-                    indexingTitle = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1)), ', P_{FA}^{local} = ', scinot(uniqueLocalPFA(1))];
-                case "globalThreshold"
-                    xData = 10*log10(obj.globalThreshold); % [NpfaGlobal x 1 x M x Nlocal]
-                    if isscalar(xData)
-                        fprintf('choose non-scalar x-axis \n');
-                        return
-                    elseif ~isvector(xData)
-                        xData = squeeze(xData(1, 1, :, 1)); % [NpfaGlobal x 1 x M x Nlocal] --> [M x 1] after indexing
-                    end
-                    if max(abs(diff(xData))) < eps
-                        fprintf('choose non-scalar x-axis \n');
-                        return
-                    end
-                    xLabel = 'T_{global} (dB)';
-                    xTitle = xLabel;
-                    indexingPriority = ["globalPFA", "localPFA"];
-                    legendPriority = "SNR";
-                    uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows');
-                    indexingTitle = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1)), ', P_{FA}^{local} = ', scinot(uniqueLocalPFA(1))];
-                case {"localPFA", "localThreshold", "localPD"}
-                    switch options.x_axis
-                        case "localPFA"
-                            plotFunc = @semilogx;
-                            uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
-                            xData = uniqueLocalPFA; % [1 x Nlocal]
-                            xLabel = 'P_{FA}^{local}';
-                            if isscalar(xData)
-                                fprintf('choose non-scalar x-axis \n');
-                                return
-                            elseif isvector(xData)
-                                if max(abs(diff(xData))) < eps
-                                    fprintf('choose non-scalar x-axis \n');
-                                    return
-                                end
-                            end
-                        case "localThreshold"
-                            uniqueLocalThreshold = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localThreshold, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
-                            xData = uniqueLocalThreshold; % [1 x Nlocal]
-                            xLabel = 'T_{local} (dB)';
-                            if isscalar(xData)
-                                fprintf('choose non-scalar x-axis \n');
-                                return
-                            elseif isvector(xData)
-                                if max(abs(diff(xData))) < eps
-                                    fprintf('choose non-scalar x-axis \n');
-                                    return
-                                end
-                            end
-                        case "localPD"
-                            uniqueLocalPD = unique(reshape(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPD, 'UniformOutput', false).'), [1 2 4 3]), length(obj.numberOfSensors), []), 'rows', 'stable'); % [1 x M] cell of [M x Nsnr x 1 x Nlocal] matrices
-                            xData = reshape(uniqueLocalPD(1, :), [], length(obj.localPFA)); % [Nsnr x Nlocal]
-                            xLabel = 'P_{D}^{local}';
-                            if isscalar(xData)
-                                fprintf('choose non-scalar x-axis \n');
-                                return
-                            end
-                    end
-                    xTitle = xLabel;
-                    indexingPriority = ["globalPFA", "numberOfSensors", "SNR"];
-                    legendPriority = ["SNR", "numberOfSensors", "globalPFA"];
-                    indexingTitle = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1)), ', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
-            end
-            switch options.y_axis
-                case "globalPFA"
-                    if isequal(plotFunc, @semilogx)
-                        plotFunc = @loglog;
-                    else
-                        plotFunc = @semilogy;
-                    end
-                    % dataDimensions = ["globalPFA", "", "numberOfSensors", "localPFA"];
-                    yDataEmpirical = obj.globalPFAsimulation; % [NpfaGlobal x 1 x M x Nlocal]
-                    indexingTitle = '';
-                    switch options.x_axis
-                        case "globalPFA"
-                            yDataAnalytical = repmat(obj.globalPFA, 1, length(obj.numberOfSensors)); % [NpfaGlobal x M]
-                            legendString = num2str(obj.numberOfSensors.');
-                            legendTitleString = '#sensors';
-                        case "numberOfSensors"
-                            yDataAnalytical = repmat(obj.globalPFA, 1, length(obj.numberOfSensors)); % [NpfaGlobal x M]
-                            legendString = num2str(obj.globalPFA);
-                            legendTitleString = 'P_{FA}^{global}';
-                        case "SNR"
-                            yDataAnalytical = repmat(obj.globalPFA, 1, length(xData)); % [NpfaGlobal x Nsnr]
-                            yDataEmpirical = repmat(yDataEmpirical, 1, length(xData)); % [NpfaGlobal x Nsnr x M]
-                            yDataEmpirical = yDataEmpirical(:, :, ceil(end/2));
-                            indexingTitle = [', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
-                            legendString = num2str(obj.globalPFA);
-                            legendTitleString = 'P_{FA}^{global}';
-                        case "localPFA"
-                            yDataAnalytical = repmat(obj.globalPFA, 1, length(xData)); % [NpfaGlobal x Nlocal]
-                            yDataEmpirical = squeeze(yDataEmpirical(1, 1, :, :));
-                            indexingTitle = [', P_{FA}^{global} = ', sprintf('%d', obj.globalPFA(1))];
-                            legendString = num2str(obj.numberOfSensors.');
-                            legendTitleString = '#sensors';
-                    end
-                    yLabel = 'P_{FA}^{global}';
-                    yTitle = yLabel;
-                case "globalPD"
-                    dataDimensions = ["globalPFA", "SNR", "numberOfSensors", "localPFA"];
-                    yDataEmpirical = obj.globalPDsimulation; % [NpfaGlobal x Nsnr x M x Nlocal]
-                    yDataAnalytical = obj.globalPD; % [NpfaGlobal x Nsnr x M x Nlocal]
-                    yLabel = 'P_{D}^{global}';
-                    yTitle = yLabel;
-                    dataSize = size(yDataAnalytical, [1 2 3 4]);
-                    indexing = arrayfun(@(i) 1 : dataSize(i), 1 : length(dataSize), 'UniformOutput', false);
-                    indexingDimension = ismember(dataDimensions, indexingPriority);
-                    if nnz(dataSize(indexingDimension) ~= 1) > 2
-                        indices = ones(1, 4);
-                        indices(3) = ceil(dataSize(3)/2); % # sensors
-                        possibleIndicedDimensions = dataDimensions(indexingDimension);
-                        dataDimension = length(dataDimensions);
-                        indexingDimension = false(1, dataDimension);
-                        for priorityID = 1 : dataDimension - 2
-                            indexingDimension(possibleIndicedDimensions == indexingPriority(priorityID)) = true;
+            uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
+            uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
+            for plotID = 1 : length(options.x_axis)
+                plotFunc = @plot;
+                legendString = '';
+                legendTitleString = '';
+                indexingTitle = '';
+                switch options.x_axis(plotID)
+                    case "globalPFA"
+                        plotFunc = @semilogx;
+                        xData = obj.globalPFA; % [NpfaGlobal x 1]
+                        if isscalar(xData) || max(abs(diff(xData))) < 10*eps
+                            fprintf('choose non-scalar x-axis \n');
+                            continue
                         end
-                        indexing(indexingDimension) = num2cell(indices(indexingDimension));
-                        yDataEmpirical = squeeze(yDataEmpirical(indexing{:}));
-                        yDataAnalytical = squeeze(yDataAnalytical(indexing{:}));
-                        legendPriority = legendPriority(1);
-                    else
-                        yDataDimensions = dataSize ~= 1;
-                        yDataEmpirical = squeeze(yDataEmpirical);
-                        yDataAnalytical = squeeze(yDataAnalytical);
-                        legendPriority = legendPriority(find(ismember(legendPriority, dataDimensions(yDataDimensions)), 1, 'first'));
-                        switch legendPriority
-                            case "numberOfSensors"
-                                uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
-                                indexingTitle = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1)), ', SNR = ', sprintf('%g', uniqueSNR(1)), ' dB'];
+                        xLabel = 'P_{FA}^{global}';
+                        xTitle = xLabel;
+                        indexingPriority = ["localPFA", "numberOfSensors", "SNR", "globalPFA"];
+                        legendPriority = ["SNR", "numberOfSensors", "localPFA"];
+                    case "numberOfSensors"
+                        xData = obj.numberOfSensors; % [1 x M]
+                        if isscalar(xData) || max(abs(diff(xData))) < 10*eps
+                            fprintf('choose non-scalar x-axis \n');
+                            continue
+                        end
+                        xLabel = '#sensors';
+                        xTitle = xLabel;
+                        indexingPriority = ["globalPFA", "localPFA", "SNR", "numberOfSensors"];
+                        legendPriority = ["SNR", "localPFA", "globalPFA"];
+                    case "SNR"
+                        xData = uniqueSNR.'; % [1 x Nsnr]
+                        if isscalar(xData)
+                            fprintf('choose non-scalar x-axis \n');
+                            continue
+                        elseif isvector(xData)
+                            if max(abs(diff(xData))) < 10*eps
+                                fprintf('choose non-scalar x-axis \n');
+                                continue
+                            end
+                        end
+                        xLabel = 'SNR_{in} (dB)';
+                        xTitle = xLabel;
+                        indexingPriority = ["globalPFA", "localPFA", "numberOfSensors", "SNR"];
+                        legendPriority = ["numberOfSensors", "localPFA", "globalPFA"];
+                    case "globalThreshold"
+                        xData = 10*log10(obj.globalThreshold); % [NpfaGlobal x 1 x M x Nlocal]
+                        if isscalar(xData)
+                            fprintf('choose non-scalar x-axis \n');
+                            continue
+                        elseif isvector(xData)
+                            if max(abs(diff(xData))) < 10*eps
+                                fprintf('choose non-scalar x-axis \n');
+                                continue
+                            end
+                        end
+                        xLabel = 'T_{global} (dB)';
+                        xTitle = xLabel;
+                        indexingPriority = ["globalPFA", "localPFA", "SNR", "numberOfSensors"];
+                        legendPriority = ["SNR", "localPFA", "numberOfSensors", "globalPFA"];
+                    case {"localPFA", "localThreshold", "localPD"}
+                        switch options.x_axis(plotID)
+                            case "localPFA"
+                                plotFunc = @semilogx;
+                                xData = uniqueLocalPFA; % [1 x Nlocal] or [M x Nlocal]
+                                xLabel = 'P_{FA}^{local}';
+                                if isscalar(xData)
+                                    fprintf('choose non-scalar x-axis \n');
+                                    continue
+                                elseif isvector(xData)
+                                    if max(abs(diff(xData))) < 10*eps
+                                        fprintf('choose non-scalar x-axis \n');
+                                        continue
+                                    end
+                                else
+                                    xData = xData(1, :);
+                                end
+                                legendPriority = ["SNR", "numberOfSensors", "globalPFA"];
+                            case "localThreshold"
+                                uniqueLocalThreshold = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localThreshold, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
+                                xData = uniqueLocalThreshold; % [1 x Nlocal] or [M x Nlocal]
+                                xLabel = 'T_{local} (dB)';
+                                if isscalar(xData)
+                                    fprintf('choose non-scalar x-axis \n');
+                                    continue
+                                elseif isvector(xData)
+                                    if max(abs(diff(xData))) < 10*eps
+                                        fprintf('choose non-scalar x-axis \n');
+                                        continue
+                                    end
+                                else
+                                    xData = xData(1, :);
+                                end
+                                legendPriority = ["localPFA", "SNR", "numberOfSensors", "globalPFA"];
+                            case "localPD"
+                                uniqueLocalPD = unique(reshape(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPD, 'UniformOutput', false).'), [1 2 4 3]), length(obj.numberOfSensors), []), 'rows', 'stable'); % [1 x M] cell of [M x Nsnr x 1 x Nlocal] matrices
+                                xData = uniqueLocalPD;
+                                if isscalar(xData)
+                                    fprintf('choose non-scalar x-axis \n');
+                                    continue
+                                elseif isvector(xData)
+                                    if max(abs(diff(xData))) < 10*eps
+                                        fprintf('choose non-scalar x-axis \n');
+                                        continue
+                                    end
+                                else
+                                    xData = reshape(xData(1, :), [], length(uniqueLocalPFA(1, :))); % [Nsnr x Nlocal]
+                                end
+                                xLabel = 'P_{D}^{local}';
+                                if isscalar(xData)
+                                    fprintf('choose non-scalar x-axis \n');
+                                    continue
+                                end
+                                legendPriority = ["localPFA", "SNR", "numberOfSensors", "globalPFA"];
+                        end
+                        xTitle = xLabel;
+                        indexingPriority = ["globalPFA", "numberOfSensors", "SNR", "localPFA"];
+                end
+                if ~any(strcmp(options.x_axis(plotID), ["globalPFA", "SNR", "numberOfSensors", "localPFA"]))
+                    if numel(xData) == length(uniqueLocalPFA(1, :))
+                        legendPriority = setdiff(legendPriority, "globalPFA");
+                    end
+                    if numel(xData) == length(uniqueSNR)
+                        legendPriority = setdiff(legendPriority, "SNR");
+                    end
+                    if numel(xData) == length(uniqueLocalPFA(1, :))
+                        legendPriority = setdiff(legendPriority, "localPFA");
+                    end
+                end
+                if numel(xData) == length(obj.numberOfSensors)
+                    legendPriority = setdiff(legendPriority, "numberOfSensors");
+                end
+                switch options.y_axis
+                    case "globalPFA"
+                        if isequal(plotFunc, @semilogx)
+                            plotFunc = @loglog;
+                        else
+                            plotFunc = @semilogy;
+                        end
+                        % dataDimensions = ["globalPFA", "", "numberOfSensors", "localPFA"];
+                        yDataEmpirical = obj.globalPFAsimulation; % [NpfaGlobal x 1 x M x Nlocal]
+                        switch options.x_axis(plotID)
                             case "globalPFA"
-                                uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
-                                indexingTitle = [', SNR = ', sprintf('%g', uniqueSNR(1)), ' dB'];
-                        end
-                    end
-                    if ~isvector(yDataEmpirical) && ~isvector(yDataAnalytical)
-                        switch legendPriority
-                            case "numberOfSensors"
-                                legendString = num2str(obj.numberOfSensors');
+                                yDataAnalytical = repmat(obj.globalPFA, 1, length(obj.numberOfSensors)); % [NpfaGlobal x M]
+                                legendString = num2str(obj.numberOfSensors.');
                                 legendTitleString = '#sensors';
-                            case "SNR"
-                                uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
-                                if size(uniqueSNR, 1) == 1
-                                    legendString = num2str(uniqueSNR.');
-                                    legendTitleString = 'SNR_{in} (dB)';
-                                end
-                            case "globalPFA"
+                            case "numberOfSensors"
+                                yDataAnalytical = repmat(obj.globalPFA, 1, length(obj.numberOfSensors)); % [NpfaGlobal x M]
                                 legendString = num2str(obj.globalPFA);
                                 legendTitleString = 'P_{FA}^{global}';
+                            case "SNR"
+                                yDataAnalytical = repmat(obj.globalPFA, 1, length(xData)); % [NpfaGlobal x Nsnr]
+                                yDataEmpirical = repmat(yDataEmpirical, 1, length(xData)); % [NpfaGlobal x Nsnr x M]
+                                yDataEmpirical = yDataEmpirical(:, :, ceil(end/2));
+                                indexingTitle = [', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
+                                legendString = num2str(obj.globalPFA);
+                                legendTitleString = 'P_{FA}^{global}';
+                            case "localPFA"
+                                yDataAnalytical = repmat(obj.globalPFA, 1, length(xData)); % [NpfaGlobal x Nlocal]
+                                yDataEmpirical = squeeze(yDataEmpirical(1, 1, :, :));
+                                indexingTitle = [', P_{FA}^{global} = ', sprintf('%d', obj.globalPFA(1))];
+                                legendString = num2str(obj.numberOfSensors.');
+                                legendTitleString = '#sensors';
                         end
-                    end
-            end
-            titleString = [yTitle, ' vs ', xTitle, indexingTitle];
-            figure;
-            if any(strcmp(options.dataType, "empirical"))
-                subTitleString = ['#trials = ', scinot(obj.numberOfTrials)];
-                plotFunc(xData, yDataEmpirical, '-', 'LineWidth', 2);
-                hold on;
-            else
-                subTitleString = '';
-            end
-            if any(strcmp(options.dataType, "analytical"))
-                if any(strcmp(options.dataType, "empirical"))
-                    plotFunc(xData, yDataAnalytical, '--k');
-                else
-                    plotFunc(xData, yDataAnalytical, '-');
+                        yLabel = 'P_{FA}^{global}';
+                        yTitle = yLabel;
+                    case "globalPD"
+                        dataDimensions = ["globalPFA", "SNR", "numberOfSensors", "localPFA"];
+                        yDataEmpirical = obj.globalPDsimulation; % [NpfaGlobal x Nsnr x M x Nlocal]
+                        yDataAnalytical = obj.globalPD; % [NpfaGlobal x Nsnr x M x Nlocal]
+                        yLabel = 'P_{D}^{global}';
+                        yTitle = yLabel;
+                        dataSize = size(yDataAnalytical, [1 2 3 4]);
+                        indexing = arrayfun(@(i) 1 : dataSize(i), 1 : length(dataSize), 'UniformOutput', false);
+                        indexingDimension = ismember(dataDimensions, indexingPriority);
+                        if nnz(dataSize(indexingDimension) ~= 1) > 2
+                            indices = ones(1, 4);
+                            indices(3) = ceil(dataSize(3)/2); % # sensors
+                            possibleIndicedDimensions = dataDimensions(indexingDimension);
+                            dataDimension = nnz(dataSize(indexingDimension) ~= 1);
+                            indexingPriority = indexingPriority();
+                            indexingDimension = false(1, length(dataDimensions));
+                            numberOfIndicedDimensions = 0;
+                            for priorityID = 1 : length(dataDimensions)
+                                if dataSize(strcmp(dataDimensions, indexingPriority(priorityID))) ~= 1
+                                    indexingDimension(possibleIndicedDimensions == indexingPriority(priorityID)) = true;
+                                    numberOfIndicedDimensions = numberOfIndicedDimensions + 1;
+                                end
+                                if numberOfIndicedDimensions == dataDimension - 2
+                                    break;
+                                end
+                            end
+                            indexing(indexingDimension) = num2cell(indices(indexingDimension));
+                            yDataEmpirical = squeeze(yDataEmpirical(indexing{:}));
+                            yDataAnalytical = squeeze(yDataAnalytical(indexing{:}));
+                            legendPriority = legendPriority(find(ismember(legendPriority, dataDimensions(cellfun(@(c) ~isscalar(c), indexing))), 1, 'first'));
+                            switch options.x_axis(plotID)
+                                case "globalThreshold"
+                                    indexing{2} = 1; % SNR
+                                    xData = squeeze(xData(indexing{:}));
+                            end
+                            if indexingDimension(1) || dataSize(1) == 1
+                                globalPFAString = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1))];
+                            else
+                                globalPFAString = '';
+                            end
+                            if indexingDimension(2) || dataSize(2) == 1
+                                SNRString = [', SNR = ', sprintf('%g', uniqueSNR(1)), ' dB'];
+                            else
+                                SNRString = '';
+                            end
+                            if indexingDimension(3) || dataSize(3) == 1
+                                numberOfSensorsString = [', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
+                            else
+                                numberOfSensorsString = '';
+                            end
+                            if indexingDimension(4) || dataSize(4) == 1
+                                localPFAString = [', P_{FA}^{local} = ', scinot(uniqueLocalPFA(1))];
+                            else
+                                localPFAString = '';
+                            end
+                        else
+                            yDataDimensions = dataSize ~= 1;
+                            yDataEmpirical = squeeze(yDataEmpirical);
+                            yDataAnalytical = squeeze(yDataAnalytical);
+                            switch options.x_axis(plotID)
+                                case "globalThreshold"
+                                    xData = squeeze(xData);
+                            end
+                            legendPriority = legendPriority(find(ismember(legendPriority, dataDimensions(yDataDimensions)), 1, 'first'));
+                            if dataSize(1) == 1
+                                globalPFAString = [', P_{FA}^{global} = ', scinot(obj.globalPFA(1))];
+                            else
+                                globalPFAString = '';
+                            end
+                            if dataSize(2) == 1
+                                SNRString = [', SNR = ', sprintf('%g', uniqueSNR(1)), ' dB'];
+                            else
+                                SNRString = '';
+                            end
+                            if dataSize(3) == 1
+                                numberOfSensorsString = [', #sensors = ', sprintf('%d', obj.numberOfSensors(ceil(end/2)))];
+                            else
+                                numberOfSensorsString = '';
+                            end
+                            if dataSize(4) == 1
+                                localPFAString = [', P_{FA}^{local} = ', scinot(uniqueLocalPFA(1))];
+                            else
+                                localPFAString = '';
+                            end
+                        end
+                        indexingTitle = [globalPFAString, SNRString, numberOfSensorsString, localPFAString];
+                        if ~isvector(yDataEmpirical) && ~isvector(yDataAnalytical)
+                            switch legendPriority
+                                case "numberOfSensors"
+                                    legendString = num2str(obj.numberOfSensors');
+                                    legendTitleString = '#sensors';
+                                case "SNR"
+                                    legendString = num2str(uniqueSNR(1, :).');
+                                    legendTitleString = 'SNR_{in} (dB)';
+                                case "globalPFA"
+                                    legendString = num2str(obj.globalPFA);
+                                    legendTitleString = 'P_{FA}^{global}';
+                                case "localPFA"
+                                    legendString = num2str(uniqueLocalPFA(1, :).');
+                                    legendTitleString = 'P_{FA}^{local}';
+                            end
+                        end
                 end
-            end
-            grid off; grid minor; grid on;
-            xlabel(xLabel); ylabel(yLabel);
-            title(titleString, subTitleString);
-            if ~isempty(legendString)
-                leg = legend(legendString, 'Location', 'best');
-                title(leg, legendTitleString);
+                titleString = [yTitle, ' vs ', xTitle, indexingTitle];
+                figure;
+                if any(strcmp(options.dataType, "empirical"))
+                    subTitleString = ['#trials = ', scinot(obj.numberOfTrials)];
+                    plotFunc(xData, yDataEmpirical, '-', 'LineWidth', 2);
+                    hold on;
+                else
+                    subTitleString = '';
+                end
+                if any(strcmp(options.dataType, "analytical"))
+                    if any(strcmp(options.dataType, "empirical"))
+                        plotFunc(xData, yDataAnalytical, '--k');
+                    else
+                        plotFunc(xData, yDataAnalytical, '-');
+                    end
+                end
+                ylim([0, 1]); xlim tight;
+                grid off; grid minor; grid on;
+                xlabel(xLabel); ylabel(yLabel);
+                title(titleString, subTitleString);
+                if ~isempty(legendString)
+                    leg = legend(legendString, 'Location', 'best');
+                    title(leg, legendTitleString);
+                end
+                drawnow;
             end
 
             function str = scinot(value)
@@ -599,11 +699,9 @@ classdef detectorNoncoherent < handle
                 end
             end
         end
-    end
 
-    methods (Static)
-        function probability = totalCDF(numberOfSamples, localThreshold, localPD, snr)
-            if nargin < 4
+        function probability = totalCDF(obj, numberOfSamples, localThreshold, localPD, snr)
+            if nargin < 5
                 snr = 0;
             end
             probability = @(t) sum(arrayfun(@(k) binopdf(k, numberOfSamples, localPD)*gammaincshifted(t, k, localThreshold, snr), 0 : numberOfSamples));
@@ -615,10 +713,19 @@ classdef detectorNoncoherent < handle
                 if k == 0
                     probability = double(t <= 0);
                 else
-                    if t < k*localThreshold
-                        probability = 1;
-                    else
-                        probability = gammainc((t - k*localThreshold)./(1 + snr), k, 'upper');
+                    switch obj.globalFusionRule
+                        case "EGN"
+                            if t < k*localThreshold
+                                probability = 1;
+                            else
+                                probability = gammainc((t - k*localThreshold)./(1 + snr), k, 'upper');
+                            end
+                        case "NEGN"
+                            if t < localThreshold
+                                probability = 1;
+                            else
+                                probability = gammainc((k*t - k*localThreshold)./(1 + snr), k, 'upper');
+                            end
                     end
                 end
             end
