@@ -1,35 +1,55 @@
 %%% Anıl ARSLAN 2303980
-clc; % clear;
+clc;
+% clear;
+% close all;
 addpath(genpath([pwd '/library']));
 
 detector = detectorNoncoherent( ...
     "globalPFA", 1e-6, ...
     "numberOfSensors", 1 : 20, ...
-    "SNR_input_dB", 14, ...
+    "SNR_input_dB", 17, ...
     "localPFA", logspace(0, -8, 9) ...
     );
-detector.setconstraint;
-detector.setmontecarlo("numberOfTrials", 1e4);
-detector.setalgorithm("globalFusionRule", "EGN");
+detector.setbudgetconstraint("constraint", ["dataRate", "transmittedPower"]);
+detector.setalgorithm("globalFusionRule", "EGC");
+detector.visualize( ...
+    "x_axis", ["numberOfSensors", "SNR"], ...
+    "y_axis", "globalPD", "dataType", "analytical");
+
+% Simulation
+detector.setmontecarlo("numberOfTrials", 1e5);
 detector.simulate("printStatus", 1, "simulationData", "globalPD");
-%%% High Monte Carlo PFA simulator
-% detector.setmontecarlo("numberOfTrials", 1e5);
-% detector.simulate("printStatus", 1, "simulationData", "globalPFA");
-
-
-%%% Visualization
-% close all;
 detector.visualize( ...
     "x_axis", ["globalPFA", "numberOfSensors", "SNR", "globalThreshold"], ...
     "y_axis", "globalPD", "dataType", ["analytical", "empirical"]);
-% detector.visualize( ...
-%     "x_axis", ["localPFA", "localThreshold", "localPD"], ...
-%     "y_axis", "globalPD", "dataType", "analytical");
+detector.visualize( ...
+    "x_axis", ["localPFA", "localThreshold", "localPD"], ...
+    "y_axis", "globalPD", "dataType", ["analytical", "empirical"]);
 
+%% High Monte Carlo PFA simulator
+clc;
+clear;
 
+detector = detectorNoncoherent( ...
+    "globalPFA", 1e-5, ...
+    "numberOfSensors", 1 : 15, ...
+    "SNR_input_dB", 14, ...
+    "localPFA", logspace(0, -8, 5) ...
+    );
+% detector.setconstraint;
+detector.setmontecarlo("numberOfTrials", 1e7);
+detector.setalgorithm("globalFusionRule", "EGC");
+detector.simulate("printStatus", 1, "simulationData", "globalPFA");
+
+% Visualization
+% close all;
+detector.visualize( ...
+    "x_axis", ["globalPFA", "numberOfSensors", "SNR", "globalThreshold", "localPFA", "localThreshold", "localPD"], ...
+    "y_axis", "globalPFA", "dataType", ["analytical", "empirical"]);
+
+%%
 
 %%%% TO DO
-% EGN vs Normalized EGN, closed form
 % mean/variance formullerini objeye koyalim
 
 % weighting
@@ -38,3 +58,6 @@ detector.visualize( ...
 % Binary Integration, 1, 0 1 bit, biz 32/16/8 bit iz ?? (Power = nonnegative real number)
 
 % SNR/sqrt(M) [cunku M^2 kadar samples olacak]
+
+% Local thresholding de optimum rule nedir?
+% EGC optimuım mudur?
