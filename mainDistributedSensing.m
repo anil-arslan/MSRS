@@ -11,12 +11,12 @@ detector = detectorNoncoherent( ...
     "localPFA", logspace(0, -8, 9) ...
     );
 detector.setbudgetconstraint("constraint", ["dataRate", "transmittedPower"]);
-detector.setalgorithm("globalFusionRule", "EGC");
+detector.setalgorithm("globalFusionRule", "PSC", "numberOfSensorsPSC", 5);
 detector.visualize( ...
     "x_axis", ["numberOfSensors", "SNR"], ...
     "y_axis", "globalPD", "dataType", "analytical");
 
-% Simulation
+%% Simulation
 detector.setmontecarlo("numberOfTrials", 1e5);
 detector.simulate("printStatus", 1, "simulationData", "globalPD");
 detector.visualize( ...
@@ -38,7 +38,7 @@ detector = detectorNoncoherent( ...
     );
 % detector.setconstraint;
 detector.setmontecarlo("numberOfTrials", 1e7);
-detector.setalgorithm("globalFusionRule", "EGC");
+detector.setalgorithm("globalFusionRule", "SC");
 detector.simulate("printStatus", 1, "simulationData", "globalPFA");
 
 % Visualization
@@ -51,8 +51,11 @@ detector.visualize( ...
 
 %%%% TO DO
 % mean/variance formullerini objeye koyalim
+% average output SNR
 
-% weighting
+% what is mean p_d, conditioned on given SNR?
+
+% weighting, MRC
 % different SNR
 
 % Binary Integration, 1, 0 1 bit, biz 32/16/8 bit iz ?? (Power = nonnegative real number)
@@ -61,3 +64,4 @@ detector.visualize( ...
 
 % Local thresholding de optimum rule nedir?
 % EGC optimuım mudur?
+

@@ -7,17 +7,20 @@ classdef detectorNoncoherent < handle
     properties (SetAccess = private, GetAccess = public)
         seed (1, 1) double {mustBeNonnegative, mustBeInteger, mustBeInRange(seed, 0, 4294967295)} = 0
         numberOfTrials (1, 1) double {mustBeNonnegative, mustBeInteger} = 1e3
-        numberOfSensors (1, :) double {mustBeNonnegative, mustBeInteger} = 10 % [1 x M]
         SNR_input_dB (1, :) cell = {4} % [1 x M] cell of [M x Nsnr] matrices
+        numberOfSensors (1, :) double {mustBeNonnegative, mustBeInteger} = 10 % [1 x M]
     end
 
     %%% Fusion parameters
 
     properties (SetAccess = private, GetAccess = public)
-        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "NEGC", "MRC"])} = "EGC"
+        numberOfSensorsPSC (1, :) double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
+        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC"])} = "EGC"
         % EGC: Equal Gain Combining
         % NEGC: Normalized Equal Gain Combining
         % MRC: Maximal Ratio Combining
+        % SC: Selective combining
+        % PSC: Partial selective combining
     end
 
     properties (SetAccess = private, GetAccess = public)
@@ -74,6 +77,7 @@ classdef detectorNoncoherent < handle
             end
             obj.globalPFA = options.globalPFA;
             obj.numberOfSensors = options.numberOfSensors;
+            obj.numberOfSensorsPSC = ceil(obj.numberOfSensors/2);
             numberOfScansPFAglobal = length(obj.globalPFA);
             numberOfScans = length(obj.numberOfSensors);
             obj.SNR_input_dB = cell(1, numberOfScans); % [1 x M] cell
@@ -162,17 +166,31 @@ classdef detectorNoncoherent < handle
                     for localPFAID = 1 : numberOfScansLocalPFA
                         pfaLocal = unique(obj.localPFA{scanID}(:, :, :, localPFAID)); % unique local PFA across all sensors
                         lambda = unique(Tlocal{scanID}(:, :, :, localPFAID)); % unique local threshold across all sensors
-                        thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-selective combiner threshold, conventional
-                        thresholdSearchSpace = [0, M*lambda + thresholdNSC];
-                        if lambda
-                            F = obj.totalCDF(M, lambda, pfaLocal);
-                            Tglobal(PFAID, 1, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
-                        else
-                            switch obj.globalFusionRule
-                                case "NEGC"
-                                    thresholdNSC = thresholdNSC/M;
-                            end
-                            Tglobal(PFAID, 1, scanID, localPFAID) = thresholdNSC;
+                        switch obj.globalFusionRule
+                            case {"EGC", "NEGC"}
+                                thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-selective combiner threshold, conventional
+                                if lambda
+                                    thresholdSearchSpace = [0, M*lambda + thresholdNSC];
+                                    F = obj.totalCDF(M, lambda, pfaLocal);
+                                    Tglobal(PFAID, 1, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
+                                else
+                                    switch obj.globalFusionRule
+                                        case "NEGC"
+                                            thresholdNSC = thresholdNSC/M;
+                                    end
+                                    Tglobal(PFAID, 1, scanID, localPFAID) = thresholdNSC;
+                                end
+                            case "SC"
+                                Tglobal(PFAID, 1, scanID, localPFAID) = max(lambda, -log(1 - (1 - pfaGlobal).^(1/M)));
+                            case "PSC"
+                                thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-selective combiner threshold, conventional
+                                if lambda
+                                    thresholdSearchSpace = [0, M*lambda + thresholdNSC];
+                                    F = obj.totalCDF(M, lambda, pfaLocal);
+                                    Tglobal(PFAID, 1, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
+                                else
+                                    Tglobal(PFAID, 1, scanID, localPFAID) = gammaincinv(pfaGlobal, obj.numberOfSensorsPSC(scanID), 'upper');
+                                end
                         end
                     end
                 end
@@ -264,14 +282,24 @@ classdef detectorNoncoherent < handle
         function setalgorithm(obj, options)
             arguments
                 obj
-                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "NEGC", "MRC"])} = obj.globalFusionRule
+                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC"])} = obj.globalFusionRule
                 % EGC: Equal Gain Combining
                 % NEGC: Normalized Equal Gain Combining
                 % MRC: Maximal Ratio Combining
+                % SC: Selective combining
+                % PSC: Partial selective combining
                 options.localDataSent (1, 1) string {mustBeMember(options.localDataSent, ["power", "binary"])} = obj.localDataSent
+                options.numberOfSensorsPSC (1, :) double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
             end
             obj.globalFusionRule = options.globalFusionRule;
             obj.localDataSent = options.localDataSent;
+            if isscalar(options.numberOfSensorsPSC)
+                obj.numberOfSensorsPSC = repmat(options.numberOfSensorsPSC, 1, length(obj.numberOfSensors));
+            elseif length(options.numberOfSensorsPSC) == length(obj.numberOfSensors)
+                obj.numberOfSensorsPSC = options.numberOfSensorsPSC;
+            else
+                error('Length of "#sensors for PSC algorithm" vector must be 1 or %d', length(obj.numberOfSensors));
+            end
         end
 
         function setmontecarlo(obj, options)
@@ -330,19 +358,7 @@ classdef detectorNoncoherent < handle
                     localTestStatisticsH0 = abs(n(1 : obj.numberOfSensors(scanID), 1, :)).^2; % [M x 1 x Nmc]
                     indicatorFunction = localTestStatisticsH0 > Tlocal{scanID}; % [M x 1 x Nmc x Nlocal]
                     obj.localPFAsimulation{scanID} = mean(indicatorFunction, 3); % [M x 1 x 1 x Nlocal]
-                    switch obj.localDataSent
-                        case "power"
-                            localData = indicatorFunction.*localTestStatisticsH0; % [M x 1 x Nmc x Nloca]
-                        case "binary"
-                            localData = indicatorFunction; % [M x 1 x Nmc x Nlocal]
-                    end
-                    switch obj.globalFusionRule
-                        case "EGC"
-                            globalTestStatisticsH0 = sum(localData, 1); % [1 x 1 x Nmc x Nlocal]
-                        case "NEGC"
-                            globalTestStatisticsH0 = sum(localData, 1)./sum(indicatorFunction, 1); % [1 x 1 x Nmc x Nlocal]
-                        case "MRC"
-                    end
+                    globalTestStatisticsH0 = fusioncenter(localTestStatisticsH0);
                     obj.globalPFAsimulation(:, :, scanID, :) = mean(globalTestStatisticsH0 > Tglobal(:, :, scanID, :), 3);
                 end
                 % signal + noise is present
@@ -350,20 +366,28 @@ classdef detectorNoncoherent < handle
                     localTestStatisticsH1 = abs(x{scanID}).^2; % [M x Nsr x Nmc]
                     indicatorFunction = localTestStatisticsH1 > Tlocal{scanID}; % [M x Nsr x Nmc x Nlocal]
                     obj.localPDsimulation{scanID} = mean(indicatorFunction, 3); % [M x Nsnr x 1 x Nlocal]
-                    switch obj.localDataSent
-                        case "power"
-                            localData = indicatorFunction.*localTestStatisticsH1; % [M x Nsnr x Nmc x Nloca]
-                        case "binary"
-                            localData = indicatorFunction; % [M x Nsnr x Nmc x Nlocal]
-                    end
-                    switch obj.globalFusionRule
-                        case "EGC"
-                            globalTestStatisticsH1 = sum(localData, 1); % [1 x Nsnr x Nmc x Nlocal]
-                        case "NEGC"
-                            globalTestStatisticsH1 = sum(localData, 1)./sum(indicatorFunction, 1); % [1 x Nsnr x Nmc x Nlocal]
-                        case "MRC"
-                    end
+                    globalTestStatisticsH1 = fusioncenter(localTestStatisticsH1);
                     obj.globalPDsimulation(:, :, scanID, :) = mean(globalTestStatisticsH1 > Tglobal(:, :, scanID, :), 3);
+                end
+            end
+            function globalTestStatistics = fusioncenter(localTestStatistics)
+                switch obj.localDataSent
+                    case "power"
+                        localData = indicatorFunction.*localTestStatistics; % [M x Nsnr x Nmc x Nloca]
+                    case "binary"
+                        localData = indicatorFunction; % [M x Nsnr x Nmc x Nlocal]
+                end
+                switch obj.globalFusionRule
+                    case "EGC"
+                        globalTestStatistics = sum(localData, 1); % [1 x Nsnr x Nmc x Nlocal]
+                    case "NEGC"
+                        globalTestStatistics = sum(localData, 1)./sum(indicatorFunction, 1); % [1 x Nsnr x Nmc x Nlocal]
+                    case "MRC"
+                    case "SC"
+                        globalTestStatistics = max(localTestStatistics, [], 1); % [1 x Nsnr x Nmc x Nlocal]
+                    case "PSC"
+                        localData = sort(localData, 1, 'descend');
+                        globalTestStatistics= sum(localData(1 : obj.numberOfSensorsPSC(scanID), :, :, :), 1); % [1 x Nsnr x Nmc x Nlocal]
                 end
             end
         end
@@ -664,11 +688,42 @@ classdef detectorNoncoherent < handle
             end
         end
 
-        function probability = totalCDF(obj, numberOfSamples, localThreshold, localPD, snr)
+        function probability = totalCDF(obj, numberOfSamples, localThreshold, localProbability, snr)
             if nargin < 5
                 snr = 0;
             end
-            probability = @(t) sum(arrayfun(@(k) binopdf(k, numberOfSamples, localPD)*gammaincshifted(t, k, localThreshold, snr), 0 : numberOfSamples));
+            switch obj.globalFusionRule
+                case {"EGC", "NEGC"}
+                    probability = @(t) sum(arrayfun(@(k) binopdf(k, numberOfSamples, localProbability)*gammaincshifted(t, k, localThreshold, snr), 0 : numberOfSamples));
+                case "SC"
+                    probability = @(t) selectioncombining(t, 1, localThreshold, snr);
+                case "PSC"
+                    probability = @(t) sum(arrayfun(@(k) binopdf(k, numberOfSamples, localProbability)*partialselectioncombining(t, k, localThreshold, snr), 0 : numberOfSamples));
+            end
+
+            function probability = selectioncombining(t, k, localThreshold, snr)
+                if t < localThreshold
+                    probability = 1 - (1 - exp(-localThreshold/(1 + snr))).^numberOfSamples;
+                else
+                    probability = 1 - (1 - exp(-t/(1 + snr))).^numberOfSamples;
+                end
+            end
+            function probability = partialselectioncombining(t, k, localThreshold, snr)
+                if k <= obj.numberOfSensorsPSC(1)
+                    if t < k*localThreshold
+                        probability = 1;
+                    else
+                        probability = 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(k, j)*gammainc((t - obj.numberOfSensorsPSC(1)*localThreshold)./(1 + snr), k, 'lower'), 0 : (k - obj.numberOfSensorsPSC(1))));
+                    end
+                else
+                    if t < k*localThreshold
+                        probability = 1;
+                    else
+                        probability = gammainc((t - obj.numberOfSensorsPSC(1)*localThreshold)./(1 + snr), obj.numberOfSensorsPSC(1), 'upper');
+                    end
+                end
+            end
+
             function probability = gammaincshifted(t, k, localThreshold, snr)
                 % conditional CDF
                 if nargin < 4
@@ -690,6 +745,8 @@ classdef detectorNoncoherent < handle
                             else
                                 probability = gammainc((k*t - k*localThreshold)./(1 + snr), k, 'upper');
                             end
+                        case "MRC"
+                        case "SC"
                     end
                 end
             end
