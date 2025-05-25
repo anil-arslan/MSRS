@@ -6,14 +6,15 @@ addpath(genpath([pwd '/library']));
 
 detector = detectorNoncoherent( ...
     "globalPFA", 1e-6, ...
-    "numberOfSensors", 1 : 20, ...
-    "SNR_input_dB", 17, ...
+    "numberOfSensors", 1 : 30, ...
+    "SNR_input_dB", flipud(linspace(0, 10, 30).'), ...
     "localPFA", logspace(0, -8, 9) ...
     );
-detector.setbudgetconstraint("constraint", ["dataRate", "transmittedPower"]);
-detector.setalgorithm("globalFusionRule", "PSC", "numberOfSensorsPSC", 5);
+% detector.setbudgetconstraint("constraint", ["dataRate", "transmittedPower"]);
+detector.setalgorithm("globalFusionRule", "EGC", "numberOfSensorsPSC", 5);
 detector.visualize( ...
     "x_axis", ["numberOfSensors", "SNR"], ...
+    "x_axis", "numberOfSensors", ...
     "y_axis", "globalPD", "dataType", "analytical");
 
 %% Simulation
@@ -34,11 +35,12 @@ detector = detectorNoncoherent( ...
     "globalPFA", 1e-5, ...
     "numberOfSensors", 1 : 15, ...
     "SNR_input_dB", 14, ...
-    "localPFA", logspace(0, -8, 5) ...
+    "localPFA", logspace(0, -8, 5), ...
+    "localPFA", logspace(0, -2, 9) ...
     );
 % detector.setconstraint;
 detector.setmontecarlo("numberOfTrials", 1e7);
-detector.setalgorithm("globalFusionRule", "SC");
+detector.setalgorithm("globalFusionRule", "PSC");
 detector.simulate("printStatus", 1, "simulationData", "globalPFA");
 
 % Visualization
@@ -63,5 +65,25 @@ detector.visualize( ...
 % SNR/sqrt(M) [cunku M^2 kadar samples olacak]
 
 % Local thresholding de optimum rule nedir?
-% EGC optimuım mudur?
+% EGC optimum mudur?
 
+
+
+
+
+
+
+%% Calisma
+M = 11;
+K = 4;
+
+F = @(t) 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(M - K, j)*gammainc(t, K + j, 'lower'), 0 : (M - K)));
+
+x = linspace(0, 30, 1000);
+
+for i = 1 : length(x)
+    % c(i) = F(x(i))*K*nchoosek(M, K);
+    c(i) = F(x(i));
+end
+
+figure; plot(x, c);
