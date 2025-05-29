@@ -14,13 +14,23 @@ classdef detectorNoncoherent < handle
     %%% Fusion parameters
 
     properties (SetAccess = private, GetAccess = public)
-        numberOfSensorsPSC (1, :) double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
-        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC"])} = "EGC"
+        numberOfBinaryDetections double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
+        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC", "LDC", "GLDC", "BC", "CVBC"])} = "EGC"
+        numberOfBinaryDetectionsRule (1, 1) string {mustBeMember(numberOfBinaryDetectionsRule, ["and", "or", "majority", "fixedGlobalPFA", "userDefined"])} = "fixedGlobalPFA"
         % EGC: Equal Gain Combining
         % NEGC: Normalized Equal Gain Combining
         % MRC: Maximal Ratio Combining
-        % SC: Selective combining (Partial selective combining K = 1)
-        % PSC: Partial selective combining (Combine largest K samples)
+        % SC: Selective Combining (Partial Selective Combining K = 1)
+        % PSC: Partial Selective Combining (Combine largest K samples)
+
+        %%% Binary
+        % BC: Binary Combining
+        % CVBC: Chair-Varshney Binary Combining
+
+        %%% GLRT
+        % LDC: Log-Divergence Combining (under equal SNR)
+        % GLDC: Generalized Log-Divergence Combining (under different SNR)
+        fusionWeights (1, :) cell % [1 x M] cell of [M x Nsnr x 1 x Nlocal] matrices
     end
 
     properties (SetAccess = private, GetAccess = public)
@@ -29,8 +39,8 @@ classdef detectorNoncoherent < handle
     end
 
     properties (Dependent)
-        globalThreshold double {mustBeNonnegative} % [NpfaGlobal x 1 x M x Nlocal]
-        globalPFAanalytical double {mustBeNonnegative} % [NpfaGlobal x 1 x M x Nlocal]
+        globalThreshold double {mustBeNonnegative} % [NpfaGlobal x Nsnr x M x Nlocal]
+        globalPFAanalytical double {mustBeNonnegative} % [NpfaGlobal x Nsnr x M x Nlocal]
         globalPD double {mustBeNonnegative, mustBeInRange(globalPD, 0, 1)} % [NpfaGlobal x Nsnr x M x Nlocal]
     end
 
@@ -39,10 +49,6 @@ classdef detectorNoncoherent < handle
     end
 
     %%% Local detection parameters
-
-    properties (SetAccess = private, GetAccess = public)
-        localDataSent (1, 1) string {mustBeMember(localDataSent, ["power", "binary"])} = "power"
-    end
 
     properties (SetAccess = private, GetAccess = public)
         localPFA (1, :) cell = {0.1} % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
@@ -77,7 +83,7 @@ classdef detectorNoncoherent < handle
             end
             obj.globalPFA = options.globalPFA;
             obj.numberOfSensors = options.numberOfSensors;
-            obj.numberOfSensorsPSC = ceil(obj.numberOfSensors/2);
+            obj.numberOfBinaryDetections = ceil((obj.numberOfSensors + 1)/2);
             numberOfScansPFAglobal = length(obj.globalPFA);
             numberOfScans = length(obj.numberOfSensors);
             obj.SNR_input_dB = cell(1, numberOfScans); % [1 x M] cell
@@ -151,11 +157,53 @@ classdef detectorNoncoherent < handle
             end
         end
 
+        %%% Fusion rule
+
+        function K = get.numberOfBinaryDetections(obj)
+            switch obj.numberOfBinaryDetectionsRule
+                case "and"
+                    K = obj.numberOfSensors;
+                case "or"
+                    K = ones(1, length(obj.numberOfSensors));
+                case "majority"
+                    K = ceil((obj.numberOfSensors + 1)/2);
+                case "fixedGlobalPFA"
+                    K = obj.globalThreshold;
+                case "userDefined"
+                    K = obj.numberOfBinaryDetections;
+            end
+        end
+
         %%% Fusion parameters
 
+        function w = get.fusionWeights(obj)
+            % [1 x M] cell of [M x Nsnr x 1 x Nlocal] matrices
+            numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
+            numberOfScansLocalPFA = unique((cellfun(@(c) size(c, 4), obj.localPFA)));
+            numberOfScans = length(obj.numberOfSensors);
+            w = cell(1, numberOfScans);
+            switch obj.globalFusionRule
+                case "CVBC"
+                    for scanID = 1 : numberOfScans
+                        pfaLocal = obj.localPFA{scanID};
+                        pdLocal = obj.localPD{scanID}; % requires knowledge of SNR
+                        w{scanID} = log((pdLocal.*(1 - pfaLocal))./(pfaLocal.*(1 - pdLocal)));
+                        % lets make the sum of weights equal to #sensors so that CVBC and BC has the same maximum test statistics value
+                        w{scanID} = w{scanID}./sum(w{scanID}, 1)*obj.numberOfSensors(scanID);
+                        w{scanID}(isnan(w{scanID})) = 1;
+                    end
+                otherwise
+                    for scanID = 1 : numberOfScans
+                        w{scanID} = ones(obj.numberOfSensors(scanID), numberOfScansSNR, 1, numberOfScansLocalPFA);
+                    end
+            end
+        end
+
         function Tglobal = get.globalThreshold(obj)
-            % [NpfaGlobal x 1 x M x Nlocal]
+            % [NpfaGlobal x Nsnr x M x Nlocal]
             Tlocal = obj.localThreshold;
+            weights = obj.fusionWeights;
+            numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
             numberOfScansLocalPFA = unique((cellfun(@(c) size(c, 4), obj.localPFA)));
             numberOfScans = length(obj.numberOfSensors);
             Tglobal = zeros(length(obj.globalPFA), 1, length(obj.numberOfSensors), numberOfScansLocalPFA);
@@ -166,31 +214,65 @@ classdef detectorNoncoherent < handle
                     for localPFAID = 1 : numberOfScansLocalPFA
                         pfaLocal = obj.localPFA{scanID}(:, :, :, localPFAID);
                         lambda = Tlocal{scanID}(:, :, :, localPFAID);
-                        switch obj.globalFusionRule
-                            case {"EGC", "NEGC", "PSC"}
-                                thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-selective combiner threshold, conventional
-                                if any(lambda)
-                                    thresholdSearchSpace = [0, M*max(lambda) + thresholdNSC];
-                                    F = obj.totalCDF(M, lambda, pfaLocal);
-                                    Tglobal(PFAID, 1, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
-                                else
-                                    switch obj.globalFusionRule
-                                        case "NEGC"
-                                            thresholdNSC = thresholdNSC/M;
-                                        case "PSC"
-                                            K = obj.numberOfSensorsPSC(1);
-                                            if M < K
-                                                thresholdNSC = gammaincinv(pfaGlobal, M, 'upper');
-                                            else
-                                                F = @(t) 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(M - K, j)*gammainc(t, K + j, 'lower'), 0 : (M - K)));
-                                                Tglobal(PFAID, 1, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
-                                            end
-
+                        for snrID = 1 : numberOfScansSNR
+                            w = weights{scanID}(:, snrID, 1, localPFAID);
+                            F = obj.totalCDF(M, lambda, pfaLocal, w);
+                            switch obj.globalFusionRule
+                                case {"EGC", "NEGC", "PSC"}
+                                    thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-Selective combiner threshold, conventional
+                                    if any(lambda)
+                                        thresholdSearchSpace = [0, M*max(lambda) + thresholdNSC];
+                                        Tglobal(PFAID, snrID, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
+                                    else
+                                        switch obj.globalFusionRule
+                                            case "NEGC"
+                                                thresholdNSC = thresholdNSC/M;
+                                            case "PSC"
+                                                K = obj.numberOfBinaryDetections(scanID);
+                                                if M < K
+                                                    thresholdNSC = gammaincinv(pfaGlobal, M, 'upper');
+                                                else
+                                                    F = @(t) 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(M - K, j)*gammainc(t, K + j, 'lower'), 0 : (M - K)));
+                                                    Tglobal(PFAID, snrID, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
+                                                end
+    
+                                        end
+                                        Tglobal(PFAID, snrID, scanID, localPFAID) = thresholdNSC;
                                     end
-                                    Tglobal(PFAID, 1, scanID, localPFAID) = thresholdNSC;
-                                end
-                            case "SC"
-                                Tglobal(PFAID, 1, scanID, localPFAID) = max(lambda, -log(1 - (1 - pfaGlobal).^(1/M)));
+                                case "SC"
+                                    Tglobal(PFAID, snrID, scanID, localPFAID) = max(lambda, -log(1 - (1 - pfaGlobal).^(1/M)));
+                                case "LDC"
+                                    thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-Selective combiner threshold, conventional
+                                    thresholdSearchSpace = [0, M*max(lambda) + thresholdNSC/M];
+                                    Tglobal(PFAID, snrID, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
+                                case "GLDC" % Generalized Log-Divergence Combining
+                                case "BC"
+                                    switch obj.numberOfBinaryDetectionsRule
+                                        case "fixedGlobalPFA"
+                                            pfaGlobalK = zeros(1, M + 1);
+                                            for K = 0 : M
+                                                pfaGlobalK(K + 1) = F(K);
+                                            end
+                                            % since global PFA monotonically decreasing with K
+                                            Tglobal(PFAID, snrID, scanID, localPFAID) = find(pfaGlobalK < pfaGlobal, 1, 'first') - 0.5;
+                                            % - 0.5 prevents boundary problems
+                                        otherwise
+                                            Tglobal(PFAID, snrID, scanID, localPFAID) = obj.numberOfBinaryDetections(scanID) - 0.5;
+                                    end
+                                case "CVBC"
+                                    switch obj.numberOfBinaryDetectionsRule
+                                        case "fixedGlobalPFA"
+                                            pfaGlobalK = zeros(1, M + 1);
+                                            for K = 0 : M
+                                                pfaGlobalK(K + 1) = F(K);
+                                            end
+                                            % since global PFA monotonically decreasing with K
+                                            Tglobal(PFAID, snrID, scanID, localPFAID) = find(pfaGlobalK < pfaGlobal, 1, 'first') - 0.5;
+                                            % - 0.5 prevents boundary problems
+                                        otherwise
+                                            Tglobal(PFAID, snrID, scanID, localPFAID) = obj.numberOfBinaryDetections(scanID) - 0.5;
+                                    end
+                            end
                         end
                     end
                 end
@@ -201,17 +283,25 @@ classdef detectorNoncoherent < handle
             % [NpfaGlobal x Nsnr x M x Nlocal]
             Tglobal = obj.globalThreshold;
             Tlocal = obj.localThreshold;
+            pFAlocal = obj.localPFA;
+            weights = obj.fusionWeights;
+            numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
             numberOfScansLocalPFA = unique((cellfun(@(c) size(c, 4), obj.localPFA)));
             numberOfScans = length(obj.numberOfSensors);
-            pfa = zeros(length(obj.globalPFA), 1, length(obj.numberOfSensors), numberOfScansLocalPFA);
+            pfa = zeros(length(obj.globalPFA), numberOfScansSNR, length(obj.numberOfSensors), numberOfScansLocalPFA);
             for scanID = 1 : numberOfScans
                 M = obj.numberOfSensors(scanID);
                 for PFAID = 1 : length(obj.globalPFA)
                     for localPFAID = 1 : numberOfScansLocalPFA
-                        pfaLocal = obj.localPFA{scanID}(:, :, :, localPFAID);
+                        gamma = Tglobal(PFAID, 1, scanID, localPFAID);
                         lambda = Tlocal{scanID}(:, :, :, localPFAID);
-                        F = obj.totalCDF(M, lambda, pfaLocal);
-                        pfa(PFAID, 1, scanID, localPFAID) = F(Tglobal(PFAID, 1, scanID, localPFAID));
+                        pfaLocal = pFAlocal{scanID}(:, :, :, localPFAID);
+                        for snrID = 1 : numberOfScansSNR
+                            w = weights{scanID}(:, snrID, 1, localPFAID);
+                            F = obj.totalCDF(M, lambda, pfaLocal, w);
+                            pfa(PFAID, snrID, scanID, localPFAID) = F(gamma);
+                        end
+                        % evaluating @(gamma - 1) is important for binary fusion with integer threshold
                     end
                 end
             end
@@ -222,7 +312,8 @@ classdef detectorNoncoherent < handle
             Tglobal = obj.globalThreshold;
             Tlocal = obj.localThreshold;
             pDlocal = obj.localPD;
-            numberOfScansSNR = unique((cellfun(@(c) size(c, 2), obj.SNR_input_dB)));
+            weights = obj.fusionWeights;
+            numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
             numberOfScansLocalPFA = unique((cellfun(@(c) size(c, 4), obj.localPFA)));
             numberOfScans = length(obj.numberOfSensors);
             ROC = zeros(length(obj.globalPFA), numberOfScansSNR, numberOfScans, numberOfScansLocalPFA);
@@ -235,8 +326,10 @@ classdef detectorNoncoherent < handle
                         lambda = Tlocal{scanID}(:, :, :, localPFAID);
                         for snrID = 1 : numberOfScansSNR
                             pdLocal = pDlocal{scanID}(:, snrID, 1, localPFAID);
-                            F = obj.totalCDF(M, lambda, pdLocal, snr(:, snrID));
+                            w = weights{scanID}(:, snrID, 1, localPFAID);
+                            F = obj.totalCDF(M, lambda, pdLocal, w, snr(:, snrID));
                             ROC(PFAID, snrID, scanID, localPFAID) = F(gamma);
+                            % evaluating @(gamma - 1) is important for binary fusion with integer threshold
                         end
                     end
                 end
@@ -279,23 +372,37 @@ classdef detectorNoncoherent < handle
         function setalgorithm(obj, options)
             arguments
                 obj
-                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC"])} = obj.globalFusionRule
+                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "NEGC", "MRC", "SC", "PSC", "LDC", "GLDC", "BC", "CVBC"])} = obj.globalFusionRule
                 % EGC: Equal Gain Combining
                 % NEGC: Normalized Equal Gain Combining
                 % MRC: Maximal Ratio Combining
-                % SC: Selective combining
-                % PSC: Partial selective combining
-                options.localDataSent (1, 1) string {mustBeMember(options.localDataSent, ["power", "binary"])} = obj.localDataSent
-                options.numberOfSensorsPSC (1, :) double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
+                % SC: Selective Combining
+                % PSC: Partial Selective Combining
+
+                %%% Binary
+                % BC: Binary Combining
+                % CVBC: Chair-Varshney Binary Combining
+        
+                %%% GLRT
+                % LDC: Log-Divergence Combining
+                % GLDC: Generalized Log-Divergence Combining
+                options.numberOfBinaryDetectionsRule (1, 1) string {mustBeMember(options.numberOfBinaryDetectionsRule, ["and", "or", "majority", "fixedGlobalPFA", "userDefined"])} = obj.numberOfBinaryDetectionsRule
             end
             obj.globalFusionRule = options.globalFusionRule;
-            obj.localDataSent = options.localDataSent;
-            if isscalar(options.numberOfSensorsPSC)
-                obj.numberOfSensorsPSC = repmat(options.numberOfSensorsPSC, 1, length(obj.numberOfSensors));
-            elseif length(options.numberOfSensorsPSC) == length(obj.numberOfSensors)
-                obj.numberOfSensorsPSC = options.numberOfSensorsPSC;
+            obj.numberOfBinaryDetectionsRule = options.numberOfBinaryDetectionsRule;
+        end
+
+        function setuserdefinednumberofdetections(obj, options)
+            arguments
+                obj
+                options.userDefinedNumberOfDetections (1, :) double {mustBeNonnegative, mustBeInteger} % [1 x M]
+            end
+            if isscalar(options.userDefinedNumberOfDetections)
+                obj.numberOfBinaryDetections = repmat(options.userDefinedNumberOfDetections, 1, length(obj.numberOfSensors));
+            elseif length(options.userDefinedNumberOfDetections) == length(obj.numberOfSensors)
+                obj.numberOfBinaryDetections = options.userDefinedNumberOfDetections;
             else
-                error('Length of "#sensors for PSC algorithm" vector must be 1 or %d', length(obj.numberOfSensors));
+                error('Length of "#detections for binary Combining algorithm" vector must be 1 or %d', length(obj.numberOfSensors));
             end
         end
 
@@ -338,7 +445,7 @@ classdef detectorNoncoherent < handle
                 options.printStatus (1, 1) logical {mustBeMember(options.printStatus, [0, 1])} = true;
             end
             rng(obj.seed);
-            Tglobal = obj.globalThreshold; % [NpfaGlobal x 1 x M x Nlocal]
+            Tglobal = obj.globalThreshold; % [NpfaGlobal x Nsnr x M x Nlocal]
             Tlocal = obj.localThreshold; % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
             numberOfSensorsMax = max(obj.numberOfSensors);
             n = obj.noise; % [M x 1 x Nmc] matrix
@@ -356,7 +463,8 @@ classdef detectorNoncoherent < handle
                     indicatorFunction = localTestStatisticsH0 > Tlocal{scanID}; % [M x 1 x Nmc x Nlocal]
                     globalTestStatisticsH0 = fusioncenter(localTestStatisticsH0);
                     obj.localPFAsimulation{scanID} = mean(indicatorFunction, 3); % [M x 1 x 1 x Nlocal]
-                    obj.globalPFAsimulation(:, :, scanID, :) = mean(globalTestStatisticsH0 > Tglobal(:, :, scanID, :), 3);
+                    obj.globalPFAsimulation(:, :, scanID, :) = mean(globalTestStatisticsH0 >= Tglobal(:, :, scanID, :), 3);
+                    % equality is important for binary fusion with integer threshold
                 end
                 % signal + noise is present
                 if any(strcmp(options.simulationData, "globalPD"))
@@ -364,16 +472,12 @@ classdef detectorNoncoherent < handle
                     indicatorFunction = localTestStatisticsH1 > Tlocal{scanID}; % [M x Nsr x Nmc x Nlocal]
                     globalTestStatisticsH1 = fusioncenter(localTestStatisticsH1);
                     obj.localPDsimulation{scanID} = mean(indicatorFunction, 3); % [M x Nsnr x 1 x Nlocal]
-                    obj.globalPDsimulation(:, :, scanID, :) = mean(globalTestStatisticsH1 > Tglobal(:, :, scanID, :), 3);
+                    obj.globalPDsimulation(:, :, scanID, :) = mean(globalTestStatisticsH1 >= Tglobal(:, :, scanID, :), 3);
+                    % equality is important for binary fusion with integer threshold
                 end
             end
             function globalTestStatistics = fusioncenter(localTestStatistics)
-                switch obj.localDataSent
-                    case "power"
-                        localData = indicatorFunction.*localTestStatistics; % [M x Nsnr x Nmc x Nloca]
-                    case "binary"
-                        localData = indicatorFunction; % [M x Nsnr x Nmc x Nlocal]
-                end
+                localData = indicatorFunction.*localTestStatistics; % [M x Nsnr x Nmc x Nlocal]
                 switch obj.globalFusionRule
                     case "EGC"
                         globalTestStatistics = sum(localData, 1); % [1 x Nsnr x Nmc x Nlocal]
@@ -384,10 +488,122 @@ classdef detectorNoncoherent < handle
                         globalTestStatistics = max(localTestStatistics, [], 1); % [1 x Nsnr x Nmc x Nlocal]
                     case "PSC"
                         localData = sort(localData, 1, 'descend');
-                        globalTestStatistics = sum(localData(1 : min(obj.numberOfSensorsPSC(scanID), obj.numberOfSensors(scanID)), :, :, :), 1); % [1 x Nsnr x Nmc x Nlocal]
+                        globalTestStatistics = sum(localData(1 : min(obj.numberOfBinaryDetections(scanID), obj.numberOfSensors(scanID)), :, :, :), 1); % [1 x Nsnr x Nmc x Nlocal]
+                    case "LDC"
+                        T = sum(localData, 1)./sum(indicatorFunction, 1); % [1 x Nsnr x Nmc x Nlocal]
+                        globalTestStatistics = T - log(T) - 1;
+                    case "GLDC" % Generalized Log-Divergence Combining
+                        globalTestStatistics = sum(localData - log(localData) - 1, 1);
+                    case "BC" % Binary Combining
+                        globalTestStatistics = sum(indicatorFunction, 1); % [1 x Nsnr x Nmc x Nlocal]
+                    case "CVBC" % Chair-Varshney Binary Combining
+                        globalTestStatistics = sum(obj.fusionWeights{scanID}.*indicatorFunction, 1); % [1 x Nsnr x Nmc x Nlocal]
                 end
             end
         end
+
+        %%% utility functions
+
+        function probability = totalCDF(obj, numberOfSamples, localThreshold, localProbability, fusionWeights, snr)
+            if nargin < 6
+                snr = zeros(numberOfSamples, 1);
+            end
+            l = flip(-numberOfSamples : 0);
+            C = exp(1j*2*pi*fusionWeights/(numberOfSamples + 1)); % [M x 1] vector
+            phi = prod(1 + (C.^l - 1).*localProbability, 1);
+            poissbinopdf = real(ifft(phi));
+            if any(isnan(poissbinopdf))
+                poissbinopdf = [1, zeros(1, numberOfSamples)];
+            end
+
+            localThreshold = [0; localThreshold]; % for k = 0 case CDF = 1 for local threshold = 0
+            snr = [0; snr]; % for k = 0 case CDF independent of SNR
+            switch obj.globalFusionRule
+                case {"EGC", "NEGC", "PSC", "LDC", "GLDC"}
+                    probability = @(t) sum(arrayfun(@(k) poissbinopdf(k + 1)*gammaincshifted(t, k, localThreshold(k + 1), snr(k + 1)), 0 : numberOfSamples));
+                case "SC"
+                    probability = @(t) gammaincshifted(t, 1, localThreshold, snr);
+                case "BC"
+                    probability = @(t) 1 - sum(arrayfun(@(k) poissbinopdf(k + 1), 0 : min(floor(t), numberOfSamples)));
+                case "CVBC"
+                    nfft = 2^14;
+                    l = flip(-nfft : 0);
+                    C = exp(1j*2*pi*fusionWeights/(nfft + 1)); % [M x 1] vector
+                    phi = prod(1 + (C.^l - 1).*localProbability, 1);
+                    poissbinopdf = real(ifft(phi));
+                    % cdf = 1 - cumsum(poissbinopdf);
+                    % t_vals = linspace(0, numberOfSamples, nfft + 1);  % symmetric around mean
+                    % figure; plot(t_vals, cdf);
+                    poissbinopdf = poissbinopdf(1 : numberOfSamples + 1);
+                    poissbinopdf = poissbinopdf./sum(poissbinopdf);
+                    probability = @(t) 1 - sum(arrayfun(@(k) poissbinopdf(k + 1), 0 : min(floor(t), numberOfSamples)));
+            end
+
+            function probability = gammaincshifted(t, k, localThreshold, snr)
+                % conditional CDF
+                if nargin < 4
+                    snr = 0;
+                end
+                if k == 0
+                    probability = double(t <= 0);
+                else
+                    switch obj.globalFusionRule
+                        case "EGC" % Equal Gain Combining
+                            argument = (t - k*localThreshold)/(1 + snr);
+                            if argument < 0
+                                probability = 1;
+                            else
+                                probability = gammainc(argument, k, 'upper');
+                            end
+                        case "NEGC" % Normalized Equal Gain Combining
+                            argument = k*(t - localThreshold)/(1 + snr);
+                            if argument < 0
+                                probability = 1;
+                            else
+                                probability = gammainc(argument, k, 'upper');
+                            end
+                        case "SC" % Selective Combining (Partial Selective Combining K = 1)
+                            argument = max(t, localThreshold)/(1 + snr);
+                            probability = 1 - gammainc(argument, 1, 'lower')^numberOfSamples;
+                        case "PSC" % Partial Selective Combining (Combine largest K samples)
+                            K = obj.numberOfBinaryDetections(1);
+                            L = min(k, K);
+                            argument = max(t, L*localThreshold)/(1 + snr);
+                            if argument < 0
+                                probability = 1;
+                            else
+                                if L < K
+                                    probability = gammainc(argument, L, 'upper');
+                                else % order statistics (Simon & Alouini)
+                                    probability = 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(k - K, j)*gammainc((t - L*localThreshold)/(1 + snr), L + j, 'lower'), 0 : (k - K)));
+                                    % probability = probability*K*nchoosek(k, K);
+                                end
+                            end
+                        case "MRC" % Maximal Ratio Combining
+                        case "LDC" % Log-Divergence Combining (Assumes equal SNR while deriving GLRT)
+                            argument1 = -k*lambertw(0, -exp(-(t + 1)))/(1 + snr);
+                            argument2 = -k*lambertw(-1, -exp(-(t + 1)))/(1 + snr);
+                            if argument1 < 0
+                                probability = 1;
+                            else
+                                probability = gammainc(argument1, k, 'lower') + gammainc(argument2, k, 'upper');
+                            end
+                        case "GLDC" % Generalized Log-Divergence Combining
+                            % single sensor CDF
+                            % CDF of sum is not known, find it derive it
+                            argument1 = -lambertw(0, -exp(-(t + 1)))/(1 + snr);
+                            argument2 = -lambertw(-1, -exp(-(t + 1)))/(1 + snr);
+                            if argument1 < 0
+                                probability = 1;
+                            else
+                                probability = gammainc(argument1, 1, 'lower') + gammainc(argument2, 1, 'upper');
+                            end
+                    end
+                end
+            end
+        end
+
+        %%% visualization
 
         function visualize(obj, options)
             arguments
@@ -396,7 +612,7 @@ classdef detectorNoncoherent < handle
                 options.x_axis (1, :) string {mustBeMember(options.x_axis, ["globalPFA", "numberOfSensors", "SNR", "globalThreshold", "localPFA", "localThreshold", "localPD"])} = "numberOfSensors"
                 options.y_axis (1, 1) string {mustBeMember(options.y_axis, ["globalPFA", "globalPD"])} = "globalPD"
             end
-            uniqueSNR = unique(cell2mat(cellfun(@(c) mean(c, 1), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
+            uniqueSNR = unique(cell2mat(cellfun(@(c) 10*log10(mean(10.^(.1*c), 1)), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
             uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
             for plotID = 1 : length(options.x_axis)
                 plotFunc = @plot;
@@ -656,11 +872,11 @@ classdef detectorNoncoherent < handle
                     else
                         plotFunc(xData, yDataAnalytical, '-', 'LineWidth', 2);
                         hold on;
-                        if strcmp(options.y_axis, "globalPD")
-                            [maxValues, maxIndices] = max(yDataAnalytical, [], find(size(yDataAnalytical) == length(xData)));
-                            boundaries = maxIndices == 1 | maxIndices == length(xData);
-                            plotFunc(xData(maxIndices(~boundaries)), maxValues(~boundaries), '-ok');
-                        end
+                        % if strcmp(options.y_axis, "globalPD")
+                        %     [maxValues, maxIndices] = max(yDataAnalytical, [], find(size(yDataAnalytical) == length(xData)));
+                        %     boundaries = maxIndices == 1 | maxIndices == length(xData);
+                        %     plotFunc(xData(maxIndices(~boundaries)), maxValues(~boundaries), '-ok');
+                        % end
                     end
                 end
                 ylim([0, 1]); xlim tight;
@@ -681,76 +897,6 @@ classdef detectorNoncoherent < handle
                     str = sprintf('%0.2f•10^{-%i}', significand, abs(exponent));
                 else
                     str = sprintf('%0.2f•10^%i', significand, exponent);
-                end
-            end
-        end
-
-        function probability = totalCDF(obj, numberOfSamples, localThreshold, localProbability, snr)
-            if nargin < 5
-                snr = zeros(numberOfSamples, 1);
-            end
-            omega = 2*pi*(0 : numberOfSamples)'/(numberOfSamples + 1);
-            phi = ones(numberOfSamples + 1, 1);
-            for i = 1 : numberOfSamples
-                phi = phi.*(1 - localProbability(i) + localProbability(i)*exp(1i*omega));
-            end
-            poissbinopdf = real(ifft(phi));
-            poissbinopdf = [poissbinopdf(1); flipud(poissbinopdf(2 : end))];
-
-            localThreshold = [0; localThreshold]; % for k = 0 case CDF = 1 for local threshold = 0
-            snr = [0; snr]; % for k = 0 case CDF independent of SNR
-            switch obj.globalFusionRule
-                case {"EGC", "NEGC", "PSC"}
-                    probability = @(t) sum(arrayfun(@(k) poissbinopdf(k + 1)*gammaincshifted(t, k, localThreshold(k + 1), snr(k + 1)), 0 : numberOfSamples));
-
-                    % localProbability = [localProbability(1); localProbability];
-                    % probability = @(t) sum(arrayfun(@(k) binopdf(k, numberOfSamples, localProbability(k + 1))*gammaincshifted(t, k, localThreshold(k + 1), snr(k + 1)), 0 : numberOfSamples));
-                case "SC"
-                    probability = @(t) gammaincshifted(t, 1, localThreshold, snr);
-            end
-
-            function probability = gammaincshifted(t, k, localThreshold, snr)
-                % conditional CDF
-                if nargin < 4
-                    snr = 0;
-                end
-                if k == 0
-                    probability = double(t <= 0);
-                else
-                    switch obj.globalFusionRule
-                        case "EGC"
-                            argument = (t - k*localThreshold)/(1 + snr);
-                            if argument < 0
-                                probability = 1;
-                            else
-                                probability = gammainc(argument, k, 'upper');
-                            end
-                        case "NEGC"
-                            argument = k*(t - localThreshold)/(1 + snr);
-                            if argument < 0
-                                probability = 1;
-                            else
-                                probability = gammainc(argument, k, 'upper');
-                            end
-                        case "SC"
-                            argument = max(t, localThreshold)/(1 + snr);
-                            probability = 1 - gammainc(argument, 1, 'lower')^numberOfSamples;
-                        case "PSC"
-                            K = obj.numberOfSensorsPSC(1);
-                            L = min(k, K);
-                            argument = max(t, L*localThreshold)/(1 + snr);
-                            if argument < 0
-                                probability = 1;
-                            else
-                                if L < K
-                                    probability = gammainc(argument, L, 'upper');
-                                else % order statistics (Simon & Alouini)
-                                    probability = 1 - sum(arrayfun(@(j) (-1).^j*nchoosek(k - K, j)*gammainc((t - L*localThreshold)/(1 + snr), L + j, 'lower'), 0 : (k - K)));
-                                    % probability = probability*K*nchoosek(k, K);
-                                end
-                            end
-                        case "MRC"
-                    end
                 end
             end
         end
