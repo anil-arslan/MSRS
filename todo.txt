@@ -2,6 +2,10 @@ std fs/10 time senkronizasyon hatasi monostaticdeki ozel bolgeyi kontrol et
 
 CURRENT
 
+Most critical to do list
+    resolution cell calculation, possible neighbours, cramer rao
+    multi target simulations
+
 Critical to do list
     transmitter and receiver phase/time/frequency shift/synchronization
     element pattern e.g. 120°
@@ -10,7 +14,6 @@ Critical to do list
     multi TX de different transmitted power?
     compressive sensing CFAR
     tek sample bandwidth sinc ile model reconstruction theory?
-    resolution cell calculation, possible neighbours, cramer rao
     setintegrationindices neighbour table.
     TX seperation = time/frequency/waveform
     monostatic different frequency = FDA ?

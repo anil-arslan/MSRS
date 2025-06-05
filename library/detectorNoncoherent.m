@@ -15,7 +15,7 @@ classdef detectorNoncoherent < handle
 
     properties (SetAccess = private, GetAccess = public)
         numberOfBinaryDetections double {mustBeNonnegative, mustBeInteger} = 1 % [1 x M]
-        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "MRC", "LDC", "GLDC", "BC", "CVBC", "NEGC", "SC", "PSC"])} = "EGC"
+        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["EGC", "MRC", "LDC", "GLDC", "BC", "CVBC", "NEGC", "MRCbiased", "SC", "PSC"])} = "EGC"
         numberOfBinaryDetectionsRule (1, 1) string {mustBeMember(numberOfBinaryDetectionsRule, ["and", "or", "majority", "fixedGlobalPFA", "userDefined"])} = "fixedGlobalPFA"
         %%% LRT
         % EGC: Equal Gain Combining (LRT under equal SNR)
@@ -31,6 +31,7 @@ classdef detectorNoncoherent < handle
 
         %%%
         % NEGC: Normalized Equal Gain Combining
+        % MRCbiased: Maximal Ratio Combining without unbias term
         % SC: Selective Combining (Partial Selective Combining K = 1)
         % PSC: Partial Selective Combining (Combine largest K samples)
         fusionWeights (1, :) cell % [1 x M] cell of [M x Nsnr x 1 x Nlocal] matrices
@@ -187,7 +188,7 @@ classdef detectorNoncoherent < handle
             numberOfScans = length(obj.numberOfSensors);
             w = cell(1, numberOfScans);
             switch obj.globalFusionRule
-                case "MRC"
+                case {"MRC", "MRCbiased"}
                     for scanID = 1 : numberOfScans
                         snr = 10.^(.1*obj.SNR_input_dB{scanID});
                         w{scanID} = repmat(snr./(1 + snr), [1 1 1 numberOfScansLocalPFA]);
@@ -268,43 +269,46 @@ classdef detectorNoncoherent < handle
                         
                             %%%
                                 % NEGC: Normalized Equal Gain Combining
+                                % MRCbiased: Maximal Ratio Combining without unbias term
                                 % SC: Selective Combining (Partial Selective Combining K = 1)
                                 % PSC: Partial Selective Combining (Combine largest K samples)
-                                case {"EGC", "MRC", "LDC", "GLDC", "NEGC", "SC", "PSC"}
+                                case {"EGC", "MRC", "LDC", "GLDC", "NEGC", "MRCbiased", "SC", "PSC"}
                                     thresholdNSC = gammaincinv(pfaGlobal, M, 'upper'); % equal gain non-Selective combiner threshold, conventional
                                     thresholdSearchSpace = [0, sum(w.*lambda) + 2*thresholdNSC] + sum(b);
                                 case {"BC", "CVBC"} %%% Binary
                                     thresholdSearchSpace = [0, sum(w)] + sum(b);
                             end
                             switch obj.globalFusionRule
-                                case {"EGC", "MRC", "LDC", "NEGC"} % float threshold
+                                case {"EGC", "MRC", "MRCbiased", "LDC", "NEGC"} % continous float threshold
                                     Tglobal(PFAID, snrID, scanID, localPFAID) = fzero(@(t) F(t) - pfaGlobal, thresholdSearchSpace);
-                                case "BC" % integer threshold
-                                    switch obj.numberOfBinaryDetectionsRule
-                                        case "fixedGlobalPFA"
-                                            pfaGlobalK = zeros(1, M + 1);
-                                            for K = 0 : M
-                                                pfaGlobalK(K + 1) = F(K);
-                                            end
-                                            % since global PFA monotonically decreasing with K
-                                            Tglobal(PFAID, snrID, scanID, localPFAID) = find(pfaGlobalK < pfaGlobal, 1, 'first') - 0.5;
-                                            % - 0.5 prevents boundary problems
-                                        otherwise
-                                            Tglobal(PFAID, snrID, scanID, localPFAID) = obj.numberOfBinaryDetections(scanID) - 0.5;
-                                    end
-                                case "CVBC"
-                                    for subSetID = 1 : numberOfSubsets
-                                        indices = logical(allSubsets(subSetID, :));
-                                        pmf(subSetID) = prod(pfaLocal(indices))*prod(1 - pfaLocal(~indices));
-                                        weightSet(subSetID) = sum(w(indices));
-                                    end
-                                    [weightSet, sortIndices] = sort(weightSet);
-                                    cdf = 1 - cumsum(pmf(sortIndices));
-                                    thresholdIndex = find(cdf < pfaGlobal, 1, 'first');
-                                    if thresholdIndex ~= numberOfSubsets
-                                        threshold = mean(weightSet([thresholdIndex, thresholdIndex + 1]));
-                                    else
-                                        threshold = weightSet(thresholdIndex) + 0.5;
+                                case {"BC", "CVBC"} % discrete thresholds
+                                    if isscalar(unique(w)) || strcmp(obj.globalFusionRule, "BC") % discrete uniform integer thresholds
+                                        switch obj.numberOfBinaryDetectionsRule
+                                            case "fixedGlobalPFA"
+                                                pfaGlobalK = zeros(1, M + 1);
+                                                for K = 0 : M
+                                                    pfaGlobalK(K + 1) = F(K);
+                                                end
+                                                % since global PFA monotonically decreasing with K
+                                                threshold = find(pfaGlobalK < pfaGlobal, 1, 'first') - 0.5;
+                                                % - 0.5 prevents boundary problems
+                                            otherwise
+                                                threshold = obj.numberOfBinaryDetections(scanID) - 0.5;
+                                        end
+                                    else % discrete but nonuniform float thresholds
+                                        for subSetID = 1 : numberOfSubsets
+                                            indices = logical(allSubsets(subSetID, :));
+                                            pmf(subSetID) = prod(pfaLocal(indices))*prod(1 - pfaLocal(~indices));
+                                            weightSet(subSetID) = sum(w(indices));
+                                        end
+                                        [weightSet, sortIndices] = sort(weightSet);
+                                        cdf = 1 - cumsum(pmf(sortIndices));
+                                        thresholdIndex = find(cdf - eps < pfaGlobal, 1, 'first');
+                                        if thresholdIndex ~= numberOfSubsets
+                                            threshold = mean(weightSet([thresholdIndex, thresholdIndex + 1]));
+                                        else
+                                            threshold = weightSet(thresholdIndex) + 0.5;
+                                        end
                                     end
                                     Tglobal(PFAID, snrID, scanID, localPFAID) = threshold;
                                 case "SC" % inverse exists
@@ -417,7 +421,7 @@ classdef detectorNoncoherent < handle
         function setalgorithm(obj, options)
             arguments
                 obj
-                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "MRC", "LDC", "GLDC", "BC", "CVBC", "NEGC", "SC", "PSC"])} = obj.globalFusionRule
+                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["EGC", "MRC", "LDC", "GLDC", "BC", "CVBC", "NEGC", "MRCbiased", "SC", "PSC"])} = obj.globalFusionRule
                 %%% LRT
                 % EGC: Equal Gain Combining (LRT under equal SNR)
                 % MRC: Maximal Ratio Combining (LRT under different SNR)
@@ -432,6 +436,7 @@ classdef detectorNoncoherent < handle
         
                 %%%
                 % NEGC: Normalized Equal Gain Combining
+                % MRCbiased: Maximal Ratio Combining without unbias term
                 % SC: Selective Combining (Partial Selective Combining K = 1)
                 % PSC: Partial Selective Combining (Combine largest K samples)
                 options.numberOfBinaryDetectionsRule (1, 1) string {mustBeMember(options.numberOfBinaryDetectionsRule, ["and", "or", "majority", "fixedGlobalPFA", "userDefined"])} = obj.numberOfBinaryDetectionsRule
@@ -532,6 +537,8 @@ classdef detectorNoncoherent < handle
                         globalTestStatistics = sum(localData, 1); % [1 x Nsnr x Nmc x Nlocal]
                     case "MRC" % Maximal Ratio Combining (LRT under different SNR)
                         globalTestStatistics = sum(obj.fusionWeights{scanID}.*localData, 1) + sum(indicatorFunction.*obj.fusionBias{scanID}); % [1 x Nsnr x Nmc x Nlocal]
+                    case "MRCbiased" % Maximal Ratio Combining without unbias term
+                        globalTestStatistics = sum(obj.fusionWeights{scanID}.*localData, 1); % [1 x Nsnr x Nmc x Nlocal]
                  %%% GLRT
                     case "LDC" % Log-Divergence Combining (GLRT w/ joint MLE)
                         K = sum(indicatorFunction, 1);
@@ -570,6 +577,7 @@ classdef detectorNoncoherent < handle
             snr = snr(:).';
 
             uniqueLocalThreshold = unique(localThreshold);
+            uniqueFusionWeights = unique(fusionWeights);
             uniqueSNR = unique(snr);
             uniqueRandomVariable = isscalar(uniqueSNR) && isscalar(uniqueLocalThreshold);
 
@@ -601,7 +609,11 @@ classdef detectorNoncoherent < handle
                 case "BC" % Binary Combining (LRT under equal SNR)
                     probability = @(t) summationBinaryCCDF(t);
                 case "CVBC" % Chair-Varshney Binary Combining (LRT under different SNR)
-                    probability = @(t) generalizedSummationBinaryCCDF(t);
+                    if isscalar(uniqueFusionWeights) % integer threshold
+                        probability = @(t) summationBinaryCCDF(t);
+                    else
+                        probability = @(t) generalizedSummationBinaryCCDF(t);
+                    end
             %%%
                 case "NEGC" % Normalized Equal Gain Combining
                     if uniqueRandomVariable
@@ -609,6 +621,8 @@ classdef detectorNoncoherent < handle
                     else
                         probability = @(t) generalizedSummationCCDF(t);
                     end
+                case "MRCbiased" % Maximal Ratio Combining without unbias term
+                    probability = @(t) generalizedSummationCCDF(t);
                 case "SC" % Selective Combining (Partial Selective Combining K = 1)
                     probability = @(t) orderStatisticsCCDF(t);
                 case "PSC" % Partial Selective Combining (Combine largest K samples)
@@ -692,7 +706,7 @@ classdef detectorNoncoherent < handle
                                     rates = 1./(1 + snr(indices));
                                     shifts = sum(localThreshold(indices));
                                     conditionalCDF = hypoexponentialCCDF(t, rates, shifts);
-                                case "MRC" % Maximal Ratio Combining (LRT under different SNR)
+                                case {"MRC", "MRCbiased"} % Maximal Ratio Combining (LRT under different SNR)
                                     rates = 1./fusionWeights(indices)./(1 + snr(indices));
                                     shifts = fusionWeights(indices)*localThreshold(indices) + sum(fusionBiases(indices));
                                     conditionalCDF = hypoexponentialCCDF(t, rates, shifts);
@@ -792,6 +806,21 @@ classdef detectorNoncoherent < handle
             end
             uniqueSNR = unique(cell2mat(cellfun(@(c) 10*log10(mean(10.^(.1*c), 1)), obj.SNR_input_dB, 'UniformOutput', false).'), 'rows', 'stable');
             uniqueLocalPFA = unique(permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]), 'rows', 'stable'); % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
+            if any(strcmp(options.x_axis, "globalThreshold"))
+                globalThresholddB = 10*log10(obj.globalThreshold);
+            end
+            dataDimensions = ["globalPFA", "SNR", "numberOfSensors", "localPFA"];
+            yFullDataEmpirical = obj.(options.y_axis + "simulation"); % [NpfaGlobal x Nsnr x M x Nlocal]
+            if strcmp(options.y_axis, "globalPFA")
+                yFullDataAnalytical = obj.globalPFAanalytical;
+                yLabel = 'P_{FA}^{global}';
+            elseif strcmp(options.y_axis, "globalPD")
+                yFullDataAnalytical = obj.globalPD; % [NpfaGlobal x Nsnr x M x Nlocal]
+                yLabel = 'P_{D}^{global}';
+            end
+            yTitle = yLabel;
+            dataSize = size(yFullDataAnalytical, [1 2 3 4]);
+
             for plotID = 1 : length(options.x_axis)
                 plotFunc = @plot;
                 legendString = '';
@@ -834,7 +863,7 @@ classdef detectorNoncoherent < handle
                         indexingPriority = ["globalPFA", "localPFA", "numberOfSensors", "SNR"];
                         legendPriority = ["numberOfSensors", "localPFA", "globalPFA"];
                     case "globalThreshold"
-                        xData = 10*log10(obj.globalThreshold); % [NpfaGlobal x 1 x M x Nlocal]
+                        xData = globalThresholddB; % [NpfaGlobal x 1 x M x Nlocal]
                         if isscalar(xData)
                             fprintf('choose non-scalar x-axis \n');
                             continue
@@ -920,22 +949,13 @@ classdef detectorNoncoherent < handle
                 if numel(xData) == length(obj.numberOfSensors)
                     legendPriority = setdiff(legendPriority, "numberOfSensors");
                 end
-                dataDimensions = ["globalPFA", "SNR", "numberOfSensors", "localPFA"];
-                yDataEmpirical = obj.(options.y_axis + "simulation"); % [NpfaGlobal x Nsnr x M x Nlocal]
                 if strcmp(options.y_axis, "globalPFA")
-                    yDataAnalytical = obj.globalPFAanalytical;
                     if isequal(plotFunc, @semilogx)
                         plotFunc = @loglog;
                     else
                         plotFunc = @semilogy;
                     end
-                    yLabel = 'P_{FA}^{global}';
-                elseif strcmp(options.y_axis, "globalPD")
-                    yDataAnalytical = obj.globalPD; % [NpfaGlobal x Nsnr x M x Nlocal]
-                    yLabel = 'P_{D}^{global}';
                 end
-                yTitle = yLabel;
-                dataSize = size(yDataAnalytical, [1 2 3 4]);
                 indexing = arrayfun(@(i) 1 : dataSize(i), 1 : length(dataSize), 'UniformOutput', false);
                 indexingDimension = ismember(dataDimensions, indexingPriority);
                 if nnz(dataSize(indexingDimension) ~= 1) > 2
@@ -956,8 +976,8 @@ classdef detectorNoncoherent < handle
                         end
                     end
                     indexing(indexingDimension) = num2cell(indices(indexingDimension));
-                    yDataEmpirical = squeeze(yDataEmpirical(indexing{:}));
-                    yDataAnalytical = squeeze(yDataAnalytical(indexing{:}));
+                    yDataEmpirical = squeeze(yFullDataEmpirical(indexing{:}));
+                    yDataAnalytical = squeeze(yFullDataAnalytical(indexing{:}));
                     legendPriority = legendPriority(find(ismember(legendPriority, dataDimensions(cellfun(@(c) ~isscalar(c), indexing))), 1, 'first'));
                     switch options.x_axis(plotID)
                         case "globalThreshold"
@@ -986,8 +1006,8 @@ classdef detectorNoncoherent < handle
                     end
                 else
                     yDataDimensions = dataSize ~= 1;
-                    yDataEmpirical = squeeze(yDataEmpirical);
-                    yDataAnalytical = squeeze(yDataAnalytical);
+                    yDataEmpirical = squeeze(yFullDataEmpirical);
+                    yDataAnalytical = squeeze(yFullDataAnalytical);
                     switch options.x_axis(plotID)
                         case "globalThreshold"
                             xData = squeeze(xData);
