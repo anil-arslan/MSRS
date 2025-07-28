@@ -1235,6 +1235,7 @@ classdef interface < handle
                 options.numberOfCurves (1, 1) double {mustBeInteger, mustBePositive} = 10
                 options.transmittingNodeID (1, 1) double {mustBeInteger, mustBePositive} = 1
                 options.receivingNodeID (1, 1) double {mustBeInteger, mustBePositive} = 1
+                options.saveFigure (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.saveFigure, [0, 1])} = false
             end
             mustBeInRange(options.transmittingNodeID, 1, obj.numberOfTransmittingNodes);
             mustBeInRange(options.receivingNodeID, 1, obj.numberOfReceivingNodes);
@@ -1271,52 +1272,88 @@ classdef interface < handle
             x = reshape(obj.targets.position(axID1, :), L1, L2)/1e3;
             y = reshape(obj.targets.position(axID2, :), L1, L2)/1e3;
             if any(strcmpi(options.curves, "delay")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(-obj.timeDelay(options.transmittingNodeID, options.receivingNodeID, :, :)*1e6, L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g usec");
+                fig = figure; contourf(x, y, reshape(-obj.timeDelay(options.transmittingNodeID, options.receivingNodeID, :, :)*1e6, L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g usec");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso delay curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_delay';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso delay curves'); drawnow;
+                end
             end
             if any(strcmpi(options.curves, "power")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.inputSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
+                fig = figure; contourf(x, y, reshape(obj.inputSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso power curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_power';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso power curves'); drawnow;
+                end
             end
             if any(strcmpi(options.curves, "doppler")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.dopplerShift(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g Hz");
+                fig = figure; contourf(x, y, reshape(obj.dopplerShift(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g Hz");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso doppler curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_doppler';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso doppler curves'); drawnow;
+                end
             end
             if any(strcmpi(options.curves, "bistaticAngle")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.bistaticAngle(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 180, options.numberOfCurves + 3), "ShowText", true, "LabelFormat", "%3.3g");
+                fig = figure; contourf(x, y, reshape(obj.bistaticAngle(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 180, options.numberOfCurves + 3), "ShowText", true, "LabelFormat", "%3.3g");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso bistatic angle curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_bistatic_angle';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso bistatic angle curves'); drawnow;
+                end
             end
             if any(strcmpi(options.curves, "triangulation")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.triangulationFactor(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 1, options.numberOfCurves + 1), "ShowText", true, "LabelFormat", "%3.3g");
+                fig = figure; contourf(x, y, reshape(obj.triangulationFactor(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 1, options.numberOfCurves + 1), "ShowText", true, "LabelFormat", "%3.3g");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso triangulation curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_triangulation';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso triangulation curves'); drawnow;
+                end
             end
             if any(strcmpi(options.curves, "lossFactor")) || any(strcmpi(options.curves, "all"))
-                figure; contourf(x, y, reshape(obj.lossFactor(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 1, options.numberOfCurves + 1), "ShowText", true, "LabelFormat", "%3.3g");
+                fig = figure; contourf(x, y, reshape(obj.lossFactor(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 1, options.numberOfCurves + 1), "ShowText", true, "LabelFormat", "%3.3g");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
-                title('iso lossFactor curves'); drawnow;
+                if options.saveFigure
+                    figureName = 'fund_iso_lossFactor';
+                    savefig(fig, ['C:\GitRepo\MSRS\figures\' figureName '.fig']);
+                    saveas(fig, ['C:\GitRepo\MSRS\figures\' figureName '.eps'], 'epsc');
+                else
+                    title('iso lossFactor curves'); drawnow;
+                end
             end
         end
     end
