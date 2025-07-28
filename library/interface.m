@@ -13,7 +13,7 @@ classdef interface < handle
             'timeSynchronization', true, ...
             'frequencySynchronization', true ...
             )
-        spatialCoherency (1, 1) string {mustBeMember(spatialCoherency, ["deterministic", "coherent", "correlatedAmplitudeFluctuations", "incoherent"])} = "deterministic"
+        spatialCoherency (1, 1) string {mustBeMember(spatialCoherency, ["deterministic", "coherent", "correlatedAmplitudeFluctuations", "noncoherent"])} = "deterministic"
         swerling (1, 1) double {mustBeInteger, mustBeMember(swerling, 0 : 4)} = 0
         positions double % meters (3 x Nt x Nmcp matrix)
     end
@@ -56,6 +56,7 @@ classdef interface < handle
             waveformReceivedFromScatterers double % complex received waveform (Ns x Nrx x Nt x Ntx x Nmcp matrix)
             waveformReceivedFromTransmitters double % complex received waveform (Ns x Nrx x Ntx matrix)
             signalReceivedFromScatterers % complex received signal (1 x Nrx cell of Ns x 1 x Nt x Ntx x M x Nmcp matrix)
+            fluctuation % complex fluctutation (Ntx x Nrx x Nt x Nmcp matrix)
             signalReceivedFromTransmittingNodes double % complex received direct path signal % (1 x Nrx cell of Ns x 1 x Ntx x M matrix)
             signalSuperposed % (1 x Nrx cell of Ns x M x Ntxch x Nmcp matrix)
             signalBeamformed % (1 x Nrx cell of Ns x Nrxch x Ntxch x Nmcp matrix)
@@ -425,17 +426,13 @@ classdef interface < handle
                 tau = tau + permute(obj.network.timeOffsetActiveBistaticPairs, [3 2 4 1]) + permute(obj.network.timeDeviationActiveBistaticPairs, [3 2 4 1]).*randn(1, obj.numberOfReceivingNodes, 1, obj.numberOfTransmittingNodes, obj.numberOfTrialsParallel);
             end
             fd = permute(obj.dopplerShift, [5 2 3 1 4]); % 1 x Nrx x Nt x Ntx matrix
-            switch obj.network.carrierMode
-                case 'bandPassProcessing' % transmitted signals perfectly resolved in carrier frequency
-                otherwise
-                    % fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -2); % 1 x 1 x 1 x Ntx vector
-                    % modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Nt x Ntx x Nmcp matrix
-            end
+            fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -2); % 1 x 1 x 1 x Ntx vector
+            modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Nt x Ntx x Nmcp matrix
             waveforms = zeros(size(tau)); % Ns x Nrx x Nt x Ntx matrix
             for txID = 1 : obj.numberOfTransmittingNodes
                 waveforms(:, :, :, txID, :) = obj.network.activeTransmittingNodes(txID).waveform(-tau(:, :, :, txID, :));
             end
-            waveforms = waveforms.*exp(-1j*2*pi*fd.*tau);
+            waveforms = waveforms.*exp(-1j*2*pi*fd.*tau).*modulator;
             waveforms(isinf(tau)) = 0;
 
             switch obj.network.fractionalDelayMode
@@ -463,16 +460,13 @@ classdef interface < handle
             if ~obj.configuration.timeSynchronization
                 %%% not implemented
             end
-            switch obj.network.carrierMode
-                case 'bandPassProcessing' % transmitted signals perfectly resolved in carrier frequency
-                otherwise
-                    % fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1); % 1 x 1 x Ntx vector
-                    % modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Ntx matrix
-            end
+            fc = shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1); % 1 x 1 x Ntx vector
+            modulator = exp(-1j*2*pi*fc.*tau); % Ns x Nrx x Ntx matrix
             waveforms = zeros(size(tau)); % Ns x Nrx x Ntx matrix
             for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                 waveforms(:, :, txID) = obj.network.activeTransmittingNodes(txID).waveform(tau(:, :, txID));
             end
+            waveforms = waveforms.*modulator;
 
             switch obj.network.fractionalDelayMode
                 case 'sinc-based'
@@ -496,99 +490,16 @@ classdef interface < handle
         function s = get.signalReceivedFromScatterers(obj)
             % (1 x Nrx cell of Ns x 1 x Nt x Ntx x M x Nmcp matrix)
             s = cell(1, obj.network.numberOfActiveReceivingNodes);
+            targetComplexFluctuation = obj.fluctuation;
+            powerReceived = obj.receivedPowerFromScatterers_dBW;
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 if obj.configuration.pathLoss
-                    A = permute(10.^(.05*obj.receivedPowerFromScatterers_dBW(:, rxID, :, :)), [1 3 4 2]); % Ntx x Nt x Nmcp matrix
+                    Pr = permute(10.^(.05*powerReceived(:, rxID, :, :)), [1 3 4 2]); % Ntx x Nt x Nmcp matrix
                 else
-                    A = ones(obj.network.numberOfActiveTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel);
+                    Pr = ones(obj.network.numberOfActiveTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel);
                 end
-                switch obj.network.networkMode
-                    case "multiStatic"
-                        switch obj.spatialCoherency
-                            case "deterministic"
-                                switch obj.swerling
-                                    case 0 % both phase and amplitude is fixed (non random)
-                                        A = A.*1;
-                                    case 1 % only absolute amplitude fluctuates, MEANINGLESS
-                                        A = A.*abs(obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                            case "coherent"
-                                % For each RX-TX pair phases and amplitudes
-                                % are known relatively
-                                switch obj.swerling
-                                    case 0 % only absolute phase fluctuates
-                                        A = A.*exp(1j*2*pi*rand([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 1 % both absolute phase and absolute amplitude fluctuates
-                                        A = A.*obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]);
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                            case "correlatedAmplitudeFluctuations" % Similar to swerling 1 when different receivers are thought as different pulses
-                                % For each RX-TX pair phases are independent
-                                % uniformly distributed, amplitude are known relatively
-                                switch obj.swerling
-                                    case 0 % whole phase samples fluctuates
-                                        A = A.*exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 1 % whole phase samples and absolute amplitude fluctuates
-                                        A = A.*abs(obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel])).*exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                            case "incoherent" % Similar to swerling 2 when different receivers are thought as different pulses
-                                % For each target, and RX-TX pair
-                                % independent complex random variable
-                                switch obj.swerling
-                                    case 0 % whole phase samples fluctuates, MEANINGLESS
-                                        A = A.*abs(obj.complexgaussian([obj.numberOfTransmittingNodes, 1])).*exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 1 % whole complex samples fluctuates
-                                        A = A.*obj.complexgaussian([obj.numberOfTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]);
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                        end
-                    case "monoStatic"
-                        monoStaticTXID = obj.network.monoStaticTransmitterIDs(rxID);
-                        nonMonoStaticTXIDs = setdiff(1 : obj.numberOfTransmittingNodes, monoStaticTXID);
-                        % Signals from other transmitters will be random
-                        A(nonMonoStaticTXIDs, :, :) = A(nonMonoStaticTXIDs, :, :).*obj.complexgaussian([length(nonMonoStaticTXIDs), obj.numberOfTargets, obj.numberOfTrialsParallel]);
-                        switch obj.spatialCoherency
-                            case "deterministic"
-                                switch obj.swerling
-                                    case 0 % both phase and amplitude is fixed (non random)
-                                        A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*1;
-                                    case 1 % only absolute amplitude fluctuates
-                                        A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*abs(obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                            case "coherent"
-                                switch obj.swerling
-                                    case 0 % only absolute phase fluctuates
-                                        A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*exp(1j*2*pi*rand([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
-                                    case 1 % both absolute phase and absolute amplitude fluctuates
-                                        A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]);
-                                    case 3
-                                        error('chi square with 4 DOF not implemented');
-                                    case {2, 4}
-                                        error("multi pulse not implemented");
-                                end
-                            otherwise
-                                error('signal spatial coherency must be coherent for monostatic networks, reconfigure the interface');
-                        end
-                end
-                Aw = permute(A, [4 5 2 1 3]).*obj.waveformReceivedFromScatterers(:, rxID, :, :, :); % Ns x 1 x Nt x Ntx x Nmcp matrix
+                alpha = permute(targetComplexFluctuation(:, rxID, :, :), [1 3 4 2]);
+                Aw = permute(alpha.*Pr, [4 5 2 1 3]).*obj.waveformReceivedFromScatterers(:, rxID, :, :, :); % Ns x 1 x Nt x Ntx x Nmcp matrix
                 M = obj.network.activeReceivingNodes(rxID).array.numberOfTotalElements;
                 Ns = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
                 if obj.configuration.noise
@@ -600,6 +511,89 @@ classdef interface < handle
                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                     s{rxID}(:, :, :, txID, :, :) = permute(Aw(:, :, :, txID, :), [1 2 3 4 6 5]).*permute(obj.receiveSteeringVector{txID, rxID}, [6 4 2 5 1 3]) + n;
                 end
+            end
+        end
+
+        function f = get.fluctuation(obj)
+            switch obj.network.networkMode
+                case "multiStatic"
+                    switch obj.spatialCoherency
+                        case "deterministic" % both phase and amplitude is fixed (non random)
+                            f = 1;
+                        case "coherent"
+                            % For each RX-TX pair phases and amplitudes
+                            % are known relatively
+                            switch obj.swerling
+                                case 0 % only absolute phase fluctuates
+                                    f = exp(1j*2*pi*rand([1, 1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 1 % both absolute phase and absolute amplitude fluctuates
+                                    f = obj.complexgaussian([1, 1, obj.numberOfTargets, obj.numberOfTrialsParallel]);
+                                case 3
+                                    error('chi square with 4 DOF not implemented');
+                                case {2, 4}
+                                    error("multi pulse not implemented");
+                            end
+                        case "correlatedAmplitudeFluctuations" % Similar to swerling 1 when different receivers are thought as different pulses
+                            % For each RX-TX pair phases are independent
+                            % uniformly distributed, amplitude are known relatively
+                            switch obj.swerling
+                                case 0 % whole phase samples fluctuates
+                                    f = exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 1 % whole phase samples and absolute amplitude fluctuates
+                                    f = abs(obj.complexgaussian([1, 1, obj.numberOfTargets, obj.numberOfTrialsParallel])).*exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 3
+                                    error('chi square with 4 DOF not implemented');
+                                case {2, 4}
+                                    error("multi pulse not implemented");
+                            end
+                        case "noncoherent" % Similar to swerling 2 when different receivers are thought as different pulses
+                            % For each target, and RX-TX pair
+                            % independent complex random variable
+                            switch obj.swerling
+                                case 0 % whole phase samples fluctuates, MEANINGLESS
+                                    f = exp(1j*2*pi*rand([obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 1 % whole complex samples fluctuates
+                                    f = obj.complexgaussian([obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel]);
+                                case 3
+                                    error('chi square with 4 DOF not implemented');
+                                case {2, 4}
+                                    error("multi pulse not implemented");
+                            end
+                    end
+                    if size(f, 2) ~= obj.numberOfReceivingNodes
+                        f = repmat(f, [1 obj.numberOfReceivingNodes]);
+                    end
+                case "monoStatic"
+                    monoStaticTXID = obj.network.monoStaticTransmitterIDs(rxID);
+                    nonMonoStaticTXIDs = setdiff(1 : obj.numberOfTransmittingNodes, monoStaticTXID);
+                    % Signals from other transmitters will be random
+                    A(nonMonoStaticTXIDs, :, :) = A(nonMonoStaticTXIDs, :, :).*obj.complexgaussian([length(nonMonoStaticTXIDs), obj.numberOfTargets, obj.numberOfTrialsParallel]);
+                    switch obj.spatialCoherency
+                        case "deterministic"
+                            switch obj.swerling
+                                case 0 % both phase and amplitude is fixed (non random)
+                                    A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*1;
+                                case 1 % only absolute amplitude fluctuates
+                                    A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*abs(obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 3
+                                    error('chi square with 4 DOF not implemented');
+                                case {2, 4}
+                                    error("multi pulse not implemented");
+                            end
+                        case "coherent"
+                            switch obj.swerling
+                                case 0 % only absolute phase fluctuates
+                                    A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*exp(1j*2*pi*rand([1, obj.numberOfTargets, obj.numberOfTrialsParallel]));
+                                case 1 % both absolute phase and absolute amplitude fluctuates
+                                    A(monoStaticTXID, :, :) = A(monoStaticTXID, :, :).*obj.complexgaussian([1, obj.numberOfTargets, obj.numberOfTrialsParallel]);
+                                case 3
+                                    error('chi square with 4 DOF not implemented');
+                                case {2, 4}
+                                    error("multi pulse not implemented");
+                            end
+                        otherwise
+                            error('signal spatial coherency must be coherent for monostatic networks, reconfigure the interface');
+                    end
             end
         end
 
@@ -626,12 +620,9 @@ classdef interface < handle
         function s = get.signalSuperposed(obj)
             % (1 x Nrx cell of Ns x M x Ntxch x Nmcp matrix)
             s = cell(1, obj.network.numberOfActiveReceivingNodes);
-            switch obj.network.carrierMode
-                case "bandPassProcessing" % transmitted signals perfectly resolved in carrier frequency
-                    sumDimension = 3; % superpose only signals reflected from targets
-                otherwise
-                    sumDimension = [3 4]; % superpose all signals transmitted and reflected from targets
-            end
+            % transmitted signals perfectly resolved in carrier frequency
+            sumDimension = 3; % superpose only signals reflected from targets
+            % sumDimension = [3 4]; % superpose all signals transmitted and reflected from targets
             dimensionPermutation = [1 5 4 6 3 2]; % [Ns x 1 x Nt x Ntxch x M x Nmcp] --> [Ns x M x Ntxch x Nmcp x Nt x 1]
             for rxID = 1 : obj.numberOfReceivingNodes
                 switch obj.network.networkMode
@@ -966,7 +957,7 @@ classdef interface < handle
                 options.pathLoss (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.pathLoss, [0, 1])} = obj.configuration.pathLoss
                 options.timeSynchronization (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.timeSynchronization, [0, 1])} = obj.configuration.timeSynchronization
                 options.frequencySynchronization (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.frequencySynchronization, [0, 1])} = obj.configuration.frequencySynchronization
-                options.spatialCoherency (1, 1) string {mustBeMember(options.spatialCoherency, ["deterministic", "coherent", "correlatedAmplitudeFluctuations", "incoherent"])} = obj.spatialCoherency
+                options.spatialCoherency (1, 1) string {mustBeMember(options.spatialCoherency, ["deterministic", "coherent", "correlatedAmplitudeFluctuations", "noncoherent"])} = obj.spatialCoherency
                 options.swerling (1, 1) double {mustBeInteger, mustBeMember(options.swerling, 0 : 4)} = 0
             end
             obj.configuration.noise = options.noise;
@@ -974,13 +965,6 @@ classdef interface < handle
             obj.configuration.pathLoss = options.pathLoss;
             obj.configuration.timeSynchronization = options.timeSynchronization;
             obj.configuration.frequencySynchronization = options.frequencySynchronization;
-            switch obj.network.networkMode
-                case "monoStatic"
-                    if any(strcmpi(options.spatialCoherency, ["correlatedAmplitudeFluctuations", "incoherent"]))
-                        options.spatialCoherency = "coherent";
-                        warning('signal spatial coherency is assigned as coherent since the network operates as monostatic');
-                    end
-            end
             obj.spatialCoherency = options.spatialCoherency;
             obj.swerling = options.swerling;
         end
@@ -1133,7 +1117,7 @@ classdef interface < handle
             view(0, 90); hold off; drawnow;
         end
 
-        function visualizeellipses(obj, options)
+        function fig = visualizeellipses(obj, options)
             arguments
                 obj
                 options.ellipseType (1, 1) string {mustBeMember(options.ellipseType, ["target", "resolution"])} = "target"
@@ -1150,7 +1134,8 @@ classdef interface < handle
             end
             xTarget = obj.positions(1, options.targetID, options.trialID)/1e3;
             yTarget = obj.positions(2, options.targetID, options.trialID)/1e3;
-            figure; hold on;
+            fig = figure;
+            hold on;
             grid off; grid on; grid minor;
             for rxID = 1 : obj.numberOfReceivingNodes
                 for txID = 1 : obj.numberOfTransmittingNodes
@@ -1167,10 +1152,10 @@ classdef interface < handle
             switch options.ellipseType
                 case "target"
                     plot(xTarget, yTarget, 'ok', 'LineWidth', 2, 'MarkerSize', 20);
-                    title('iso bistatic range ellipse of the target');
+                    % title('iso bistatic range ellipse of the target');
                 case "resolution"
-                    plot(xTarget, yTarget, 'k*', 'LineWidth', 6, 'MarkerSize', 10);
-                    title('resolution ellipses of the target');
+                    plot(xTarget, yTarget, 'k*', 'LineWidth', 2, 'MarkerSize', 10);
+                    % title('resolution ellipses of the target');
             end
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
         end

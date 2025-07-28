@@ -9,58 +9,42 @@ classdef spu < handle
             'numberOfTrials', 1, ...
             'numberOfTrialsParallel', 1)
         configuration (1, 1) struct = struct( ...
-            'PFA', 1e-6, ...
-            'PD', 1, ...
-            'numberOfStrongestNodes', 0, ...
-            'numberOfNodesAdaptive', false, ...
-            'threshold', 0, ...
-            'thresholdAdaptive', 0, ...
-            'threshold_dB', -inf, ...
-            'thresholdAdaptive_dB', -inf, ...
-            'prePFA', 1, ...
-            'preThreshold', 0, ...
-            'preThreshold_dB', -inf);
-        configurationCompression (1, 1) struct = struct( ...
-            'numberOfTargets', nan, ...
-            'neighbourOffset', 1)
+            'globalPFA', 1e-6, ...
+            'localPFA', 1, ...
+            'decentralizedFusion', false);
         configurationMonostatic (1, 1) struct = struct( ...
             'removeBoundaryDetectionDF', 1, ...
             'removeBoundaryDetectionMF', 0, ...
             'interpolationDF', 1, ...
             'interpolationMF', 0, ...
             'groupingCloseness', 2, ... 
-            'CFAR', 1, ... % For coherent monostatic L2
+            'CFAR', 1, ...
             'numberOfTrainingCells', 20, ...
             'numberOfGuardCells', 5);
         gridResolution (3, 1) double {mustBeNonnegative} = 100*ones(3, 1)
-        processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(processingAlgorithm, 1, 6)} = 1
-        % 1: Coherent detector - Perfect knowledge of range
-        %   Maximal ratio combining
-        %   Deterministic signal
-        % 2: Coherent detector - Fully correlated spatial observations
-        %   Uniformly most powerful test (UMP)
-        %   Spatially fully correlated phase and amplitude
-        %   For weak stochastic signal, it is optimal for any distribution
-        %   Otherwise, it is optimal under AWGN
-        %   For generalized LRT, it is optimal adaptive processing algorithm
-        % 3: Noncoherent detector - Square-law envelope detector
-        %   Weak stochastic signal
-        %   Spatially independent phase, arbitrarily correlated amplitude
-        %   For weak stochastic signal, it is optimal for any distribution
-        %   Otherwise, it is an approximation of optimal processing algorithm under AWGN
-        % 4: Noncoherent detector - Linear-law envelope detector
-        %   Strong stochastic signal
-        %   Spatially independent phase, fully correlated amplitude
-        %   For generalized LRT, it is an approximation of optimal adaptive processing algorithm
-        % 5: Noncoherent detector - Square-law envelope detector
-        %   Neither strong nor weak stochastic signal
-        %   Spatially independent phase and amplitude
-        % 6: Noncoherent detector - Square-law envelope detector
-        %   Strong stochastic signal
-        %   Spatially independent phase and amplitude
-        %   For generalized LRT, it is optimal adaptive processing algorithm
-        detectionAlgorithm (1, 1) string {mustBeMember(detectionAlgorithm, ["thresholding", "peak", "CoSaMP", "OMP", "OMPjoint"])} = "thresholding"
-        preDetectionAlgorithm (1, 1) string {mustBeMember(preDetectionAlgorithm, ["thresholding", "OSCFAR"])} = "thresholding"
+        globalFusionRule (1, 1) string {mustBeMember(globalFusionRule, ["SLC", "WSLC", "BC", "CVBC", "LLC", "WLLC", "NSLC", "SC", "PSC", "EGC", "MRC"])} = "SLC"
+        %%% LRT: widely seperated receivers | spatially i.i.d circularly symmetric complex gaussian signal model
+            % SLC: Square Law Combining (LRT under equal SNR)
+            % WSLC: Weighted Sqaure Law Combining (LRT under different SNR)
+
+        %%% Binary
+            % BC: Binary Combining (LRT under equal SNR)
+            % CVBC: Chair-Varshney Binary Combining (LRT under different SNR)
+
+        %%% Other
+            % LLC: Linear Law Combining
+            % WLLC: Weighted Linear Law Combining
+            % NSLC: Normalized Square Law Combining
+            % SC: Selective Combining (Partial Selective Combining K = 1)
+            % PSC: Partial Selective Combining (Combine largest K samples)
+
+        %%% LRT: phase asynchronous closely spaced receivers | spatially i.i.d uniform phase, fully correlated amplitude
+
+        %%% LRT: phase synchronous closely spaced receivers | spatially fully correlated circularly symmetric complex gaussian signal model
+            % EGC: Equal Gain Combining
+            % MRC: Matched Filter
+        detectionAlgorithm (1, 1) string {mustBeMember(detectionAlgorithm, ["thresholding", "peak", "OMP", "OMPjoint"])} = "thresholding"
+        preDetectionAlgorithm (1, 1) string {mustBeMember(preDetectionAlgorithm, ["thresholding", "CACFAR"])} = "thresholding"
     end
 
     properties (Dependent)
@@ -76,8 +60,6 @@ classdef spu < handle
         inputSNR_lin dobule % linear scale power, % (Ntx x Nrx x Nt x Nmcp matrix)
         outputSNR_dB dobule % dB power, (1 x Nmonorx x Nt x Nmcp matrix)
         outputSNR_lin dobule % linear scale power, (1 x Nmonorx x Nt x Nmcp matrix)
-        threshold function_handle
-        ROC function_handle
         noisePowersPerSample_W double {mustBePositive} % linear scale noise power
         integrationWeights double % (Ntx x Nrx x Ni matrix)
     end
@@ -100,7 +82,6 @@ classdef spu < handle
 
     properties (Dependent)
         signalsIntegrated double % (Ni x 1 x Ncmp matrix)
-        signalsIntegratedDirectly double % (Ns_i x Ncmp matrix)
 
         thresholdCFAR cell % (1 x Nrx cell of Ns + L - 1 x Nrxch x Nmcp matrix)
         detectionFromMatchFiltration struct % (Nrx x Nmcp struct of 1 x Nd vectors) Nd : number of detections
@@ -111,8 +92,6 @@ classdef spu < handle
 
         positionError cell % (1 x Nrx cell of Nrxch x Nmcp cell of 3 x Nd x Nt matrix)
         positionErrorTotal cell % (1 x Nrx cell of Nrxch x Nmcp cell of Nd x Nt matrix)
-
-        covarianceMatrixInitial (3, 3) double
     end
 
     properties (SetAccess = private, GetAccess = public)
@@ -125,15 +104,19 @@ classdef spu < handle
             'maximumPowerHistory', []);
         coverageSimulationReport struct = struct( ...
             'targetCellIDs', [], ...
-            'PD', [], ...
-            'SNRs', [], ...
-            'SNRsMean', [])
+            'globalPDrealized', [], ...
+            'globalPDmodel', [], ...
+            'globalPFArealized', [], ...
+            'globalPFAmodel', [], ...
+            'meanSNRsModel', [], ...
+            'meanSNRsRealized', [])
         resolutionSimulationReport struct = struct( ...
-            'PD', [], ...
-            'PFA', [], ...
-            'SNRsMean', [], ...
-            'SNRmodeled', [], ...
-            'PDmodeled', [], ...
+            'globalPDrealized', [], ...
+            'globalPDmodeled', [], ...
+            'globalPFArealized', [], ...
+            'globalPFAmodel', [], ...
+            'meanSNRsRealized', [], ...
+            'meanSNRsModel', [], ...
             'numberOfUtilizedNodes', []);
     end
 
@@ -212,175 +195,35 @@ classdef spu < handle
             SNRout = 10*log10(obj.outputSNR_lin);
         end
 
-        function PD = get.ROC(obj)
-            if obj.network.passiveNetwork
-                % Passive networks
-                error('not implemented');
-            else
-                switch obj.processingAlgorithm
-                    case 1 % Coherent detector - Perfect knowledge of range
-                        %   Maximal ratio combining
-                        %   Deterministic signal
-
-                        % EXACTLY CORRECT FORMULA
-                        PD = @(PFA, SNR, N) erfc(erfcinv(2*PFA) - sqrt(SNR))/2;
-
-                    case 2 % Coherent detector - Fully correlated spatial observations
-                        %   Uniformly most powerful test (UMP)
-                        %   Spatially fully correlated phase and amplitude
-                        %   For weak stochastic signal, it is optimal for any distribution
-                        %   Otherwise, it is optimal under AWGN
-                        %   For generalized LRT, it is optimal adaptive processing algorithm
-
-                        % EXACTLY CORRECT FORMULA
-                        switch obj.interfaces.swerling
-                            case 0 % only absolute phase fluctuates
-                                % If the received signal has the same spatial
-                                % probability distributions
-                                PD = @(PFA, SNR, N) marcumq(sqrt(2*SNR), sqrt(-2*log(PFA)));
-                            case 1 % both absolute phase and absolute amplitude fluctuates
-                                % If the received signal has different but fully
-                                % correlated spatial probability distributions
-                                PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR));
-                        end
-
-                    case 3 % Noncoherent detector - Square-law envelope detector
-                        %   Weak stochastic signal
-                        %   Spatially independent phase, arbitrarily correlated amplitude
-                        %   For weak stochastic signal, it is optimal for any distribution
-                        %   Otherwise, it is an approximation of optimal processing algorithm under AWGN
-
-                        PD = @(PFA, SNR, N) nan;
-                        % not implemented
-                        switch obj.network.networkMode
-                            case "multiStatic"
-                                switch obj.network.numberOfActiveBistaticPairs
-                                    case 1
-                                        PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR)); % same as swerling 1
-                                    otherwise % check again
-                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -1))./factorial(shiftdim(0 : N - 1, -1)), 3);
-                                end
-                            case "monoStatic"
-                                PD = @(PFA, SNR, N) nan;
-                        end
-
-                    case 4 % Noncoherent detector - Linear-law envelope detector
-                        %   Strong stochastic signal
-                        %   Spatially independent phase, fully correlated amplitude
-                        %   For generalized LRT, it is an approximation of optimal adaptive processing algorithm
-
-                        PD = @(PFA, SNR, N) nan;
-                        % not implemented
-
-                    case 5 % Noncoherent detector - Square-law envelope detector
-                        %   Neither strong nor weak stochastic signal
-                        %   Spatially independent phase and amplitude
-
-                        PD = @(PFA, SNR, N) nan;
-                        % not implemented
-                        switch obj.network.networkMode
-                            case "multiStatic"
-                                switch obj.network.numberOfActiveBistaticPairs
-                                    case 1
-                                        PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR)); % same as swerling 1
-                                    otherwise % check again
-                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -3))./factorial(shiftdim(0 : N - 1, -3)), 5);
-                                end
-                            case "monoStatic"
-                                PD = @(PFA, SNR, N) nan;
-                        end
-
-                    case 6 % Noncoherent detector - Square-law envelope detector
-                        %   Strong stochastic signal
-                        %   Spatially independent phase and amplitude
-                        %   For generalized LRT, it is optimal adaptive processing algorithm
-                        switch obj.network.networkMode
-                            case "multiStatic"
-                                switch obj.network.numberOfActiveBistaticPairs
-                                    case 1
-                                        PD = @(PFA, SNR, N) PFA.^(1./(1 + SNR)); % same as swerling 1
-                                    otherwise % check again
-                                        PD = @(PFA, SNR, N) exp(-obj.threshold(PFA, N)./(1 + SNR/N)).*sum((obj.threshold(PFA, N)./(1 + SNR/N)).^(shiftdim(0 : N - 1, -3))./factorial(shiftdim(0 : N - 1, -3)), 5);
-                                end
-                            case "monoStatic"
-                                PD = @(PFA, SNR, N) nan;
-                        end
-                end
-            end
-        end
-
-        function T = get.threshold(obj)
-            if obj.network.passiveNetwork
-                % Passive networks
-                error('not implemented');
-            else
-                switch obj.processingAlgorithm
-                    case 1 % Coherent detector - Perfect knowledge of range
-                        %   Maximal ratio combining
-                        %   Deterministic signal
-
-                        % EXACTLY CORRECT FORMULA
-                        T = @(PFA, N) erfcinv(2*PFA).^2;
-
-                    case 2 % Coherent detector - Fully correlated spatial observations
-                        %   Spatially fully correlated phase and amplitude
-                        %   For weak stochastic signal, it is optimal for any distribution
-                        %   Otherwise, it is optimal under AWGN
-                        %   For generalized LRT, it is optimal adaptive processing algorithm
-
-                        % EXACTLY CORRECT FORMULA
-                        T = @(PFA, N) -log(PFA);
-
-                    case 3 % Noncoherent detector - Square-law envelope detector
-                        %   Weak stochastic signal
-                        %   Spatially independent phase, arbitrarily correlated amplitude
-                        %   For weak stochastic signal, it is optimal for any distribution
-                        %   Otherwise, it is an approximation of optimal processing algorithm under AWGN
-
-                        T = @(PFA, N) gammaincinv(1 - PFA, N);
-
-                    case 4 % Noncoherent detector - Linear-law envelope detector
-                        %   Strong stochastic signal
-                        %   Spatially independent phase, fully correlated amplitude
-                        %   For generalized LRT, it is an approximation of optimal adaptive processing algorithm
-
-                        T = @(PFA, N) nan;
-
-                    case 5 % Noncoherent detector - Square-law envelope detector
-                        %   Neither strong nor weak stochastic signal
-                        %   Spatially independent phase and amplitude
-
-                        % not implemented/for same SNR formula changes
-                        T = @(PFA, N) gammaincinv(1 - PFA, N);
-
-                    case 6 % Noncoherent detector - Square-law envelope detector
-                        %   Strong stochastic signal
-                        %   Spatially independent phase and amplitude
-                        %   For generalized LRT, it is optimal adaptive processing algorithm
-
-                        % check again
-                        T = @(PFA, N) gammaincinv(PFA, N, 'upper');
-
-                end
-            end
-        end
-
         function cfg = get.configuration(obj)
             cfg = obj.configuration;
-            switch obj.network.networkMode
-                case "multiStatic"
-                    cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin, obj.network.numberOfActiveBistaticPairs);
-                    cfg.threshold = obj.threshold(cfg.PFA, obj.network.numberOfActiveBistaticPairs);
-                    cfg.thresholdAdaptive = obj.threshold(cfg.PFA, 1 : obj.network.numberOfActiveBistaticPairs);
-                case "monoStatic"
-                    cfg.PD = obj.ROC(cfg.PFA, obj.outputSNR_lin, 1);
-                    cfg.threshold = obj.threshold(cfg.PFA, 1);
-                    cfg.thresholdAdaptive = cfg.threshold;
+            cfg.detector = detector( ...
+                "globalPFA", cfg.globalPFA, ...
+                "SNR_input_dB", reshape(obj.inputSNR_lin(:, :, :, 1), obj.network.numberOfActiveBistaticPairs, []), ...
+                "numberOfSensors", obj.network.numberOfActiveBistaticPairs, ...
+                "localPFA", cfg.localPFA);
+            switch obj.interfaces.spatialCoherency
+                case "deterministic"
+                    signalAmplitudeModel = "deterministic";
+                    signalPhaseModel = "deterministic";
+                case "coherent"
+                    signalAmplitudeModel = "correlatedExponential";
+                    signalPhaseModel = "correlatedUniform";
+                case "correlatedAmplitudeFluctuations"
+                    signalAmplitudeModel = "correlatedExponential";
+                    signalPhaseModel = "decorrelatedUniform";
+                case "noncoherent"
+                    signalAmplitudeModel = "decorrelatedExponential";
+                    signalPhaseModel = "decorrelatedUniform";
             end
-            cfg.threshold_dB = 10*log10(abs(cfg.threshold));
-            cfg.thresholdAdaptive_dB = 10*log10(abs(cfg.thresholdAdaptive));
-            cfg.preThreshold = -log(cfg.prePFA);
-            cfg.preThreshold_dB = 10*log10(cfg.preThreshold);
+            cfg.detector.setalgorithm( ...
+                "binaryDetectionRule", "notSpecified", ...
+                "binaryDetectionConstraint", "fixedGlobalPFA", ...
+                "binaryDetectionConstraint", "fixedGlobal|LocalPFA", ...
+                "signalAmplitudeModel", signalAmplitudeModel, ...
+                "signalPhaseModel", signalPhaseModel, ...
+                "globalFusionRule", obj.globalFusionRule ...
+                );
         end
 
         function n = get.noisePowersPerSample_W(obj)
@@ -389,66 +232,17 @@ classdef spu < handle
 
         function w = get.integrationWeights(obj)
             % (Ntx x Nrx x Ni matrix)
-            switch obj.processingAlgorithm
-                case 1 % Coherent detector - Perfect knowledge of range
-                    %   Maximal ratio combining
-                    %   Deterministic signal
-
-                    % w = obj.expectedCellObservations;
-                    % not implemented
-                    w = ones(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes, prod(obj.gridSize));
-
-                case 2 % Coherent detector - Fully correlated spatial observations
-                    %   Spatially fully correlated phase and amplitude
-                    %   For weak stochastic signal, it is optimal for any distribution
-                    %   Otherwise, it is optimal under AWGN
-                    %   For generalized LRT, it is optimal adaptive processing algorithm
-
-                    % checked/ not implemented
+            switch obj.globalFusionRule
+                case "EGC"
+                    w = obj.expectedCellObservations./abs(obj.expectedCellObservations); % phase only
+                case "MRC"
                     w = obj.expectedCellObservations;
-
-                case 3 % Noncoherent detector - Square-law envelope detector
-                    %   Weak stochastic signal
-                    %   Spatially independent phase, arbitrarily correlated amplitude
-                    %   For weak stochastic signal, it is optimal for any distribution
-                    %   Otherwise, it is an approximation of optimal processing algorithm under AWGN
-
-                    % not checked
-                    w = abs(obj.expectedCellObservations).^2;
-                    w = w./vecnorm(vecnorm(w, 2, 1), 2, 2).*obj.network.numberOfActiveBistaticPairs;
-
-                case 4 % Noncoherent detector - Linear-law envelope detector
-                    %   Strong stochastic signal
-                    %   Spatially independent phase, fully correlated amplitude
-                    %   For generalized LRT, it is an approximation of optimal adaptive processing algorithm
-
-                    % not checked
+                case "WSLC"
+                    w = abs(obj.expectedCellObservations).^2./(1 + abs(obj.expectedCellObservations).^2);
+                case "WLLC"
                     w = abs(obj.expectedCellObservations);
-
-                case 5 % Noncoherent detector - Square-law envelope detector
-                    %   Neither strong nor weak stochastic signal
-                    %   Spatially independent phase and amplitude
-
-                    % not checked
-                    w = 1./(1 + 1./abs(obj.expectedCellObservations).^2);
-                    w = w./vecnorm(vecnorm(w, 2, 1), 2, 2).*obj.network.numberOfActiveBistaticPairs;
-
-                case 6 % Noncoherent detector - Square-law envelope detector
-                    %   Strong stochastic signal
-                    %   Spatially independent phase and amplitude
-                    %   For generalized LRT, it is optimal adaptive processing algorithm
-
-                    w = ones(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes, prod(obj.gridSize));
-            end
-            switch obj.network.networkCoherency
-                case "short-term coherent"
-                    if any(obj.processingAlgorithm, [1 2])
-                        error('Processing algorithm %d cannot be used for short-term coherent networks', obj.processingAlgorithm);
-                    end
-                case "incoherent"
-                    if any(obj.processingAlgorithm, [1 2 4])
-                        error('Processing algorithm %d cannot be used for incoherent networks', obj.processingAlgorithm);
-                    end
+                otherwise
+                    w = ones(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes, size(obj.integrationIndices, 3));
             end
         end
 
@@ -474,56 +268,14 @@ classdef spu < handle
             [gridScan.x, gridScan.y, gridScan.z] = meshgrid(scanPoints{1}, scanPoints{2}, scanPoints{3});
         end
 
-        function y = get.signalsMatchFilteredTrials(obj)
-            % (1 x Nrx cell of Ns + L - 1 x Nrxch x Ntxch Ncmp matrix) Ncmp : number of parallel trials
-            mc = obj.monteCarlo;
-            matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
-            %%% carrier demodulation not implemented
-            % t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
-            % demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
-            Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
-            signalsBeamformed = obj.interfaces.signalBeamformed;
-            y = cell(1, obj.network.numberOfActiveReceivingNodes);
-            for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
-                switch obj.network.networkMode
-                    case 'multiStatic'
-                        numberOfTransmitters = obj.network.numberOfActiveTransmittingNodes;
-                    case 'monoStatic'
-                        numberOfTransmitters = 1;
-                end
-                y{rxID} = zeros(Ns + size(matchFilters, 1) - 1, numberOfTotalChannels, numberOfTransmitters, mc.numberOfTrialsParallel);
-                s = signalsBeamformed{rxID}; % Ns x Nrxch x Ntxch x Nmcp matrix
-                for txID = 1 : numberOfTransmitters
-                    switch obj.network.networkMode
-                        case 'multiStatic'
-                            matchFilter = conj(matchFilters(:, rxID, txID));
-                        case 'monoStatic'
-                            matchFilter = conj(matchFilters(:, rxID, obj.network.monoStaticTransmitterIDs(rxID)));
-                    end
-                    for chID = 1 : numberOfTotalChannels
-                        for mcID = 1 : mc.numberOfTrialsParallel
-                            signalChannel = s(:, chID, txID, mcID);
-                            signalChannel(isinf(signalChannel)) = 0;
-                            y{rxID}(:, chID, txID, mcID) = conv(signalChannel, matchFilter);
-                        end
-                    end
-                end
-                y{rxID} = y{rxID}./sqrt(obj.noisePowersPerSample_W(rxID));
-            end
-        end
-
         function report = get.signalsCompressedTrials(obj)
             % (Ni x Nmcp matrix)
-            if ~any(strcmpi(obj.detectionAlgorithm, ["OMP", "OMPjoint", "CoSaMP"]))
+            if ~any(strcmpi(obj.detectionAlgorithm, ["OMP", "OMPjoint"]))
                 error('Select a compression algorithm. Current algorithm is "%s"', obj.detectionAlgorithm);
             end
             mc = obj.monteCarlo;
             config = obj.configuration;
             visibleZone = ~obj.blindZone;
-            %%% carrier demodulation not implemented
-            % t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
-            % demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
             Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
             signalBeamformed = obj.interfaces.signalBeamformed;
             Nfus = obj.network.numberOfParallelSignalFusions;
@@ -558,9 +310,8 @@ classdef spu < handle
                         w = 1;
                 end
                 Nc = size(dict, 2); % number of cells
-                if config.prePFA ~= 1
+                if config.localPFA ~= 1
                     preDetection = true;
-                    targetThresholdAdaptive = config.thresholdAdaptive;
                     NTC = obj.configurationMonostatic.numberOfTrainingCells;
                     NGC = obj.configurationMonostatic.numberOfGuardCells;
                     matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
@@ -590,18 +341,18 @@ classdef spu < handle
                                 preMatchFilteredSignal = conv(signalChannel, matchFilter);
                                 switch obj.preDetectionAlgorithm
                                     case 'thresholding'
-                                        preThreshold = config.preThreshold;
-                                    case 'OSCFAR'
+                                        preThreshold = config.detector.localThreshold{1};
+                                    case 'CACFAR'
                                         numberOfSamples = size(preMatchFilteredSignal, 1);
                                         preThreshold = zeros(numberOfSamples, 1);
-                                        for sampleID = 1 : numberOfSamples % OSCFAR
+                                        for sampleID = 1 : numberOfSamples % CACFAR
                                             trainingStart = sampleID + NGC + 1;
                                             upperTraining = unique(min(trainingStart : trainingStart + NTC - 1, numberOfSamples));
                                             trainingStart = sampleID - NGC - 1;
                                             lowerTraining = unique(max(trainingStart - NTC + 1 : trainingStart, 1));
                                             trainingCellIDs = [lowerTraining, upperTraining];
                                             numberOfTrainingCells = length(trainingCellIDs);
-                                            alpha = numberOfTrainingCells.*(config.prePFA.^(-1/numberOfTrainingCells) - 1);
+                                            alpha = numberOfTrainingCells.*(config.localPFA.^(-1/numberOfTrainingCells) - 1);
                                             preThreshold(sampleID) = alpha.*mean(abs(preMatchFilteredSignal(trainingCellIDs)).^2);
                                         end
 
@@ -613,7 +364,7 @@ classdef spu < handle
                             end
                         end
                     end
-                    if config.numberOfNodesAdaptive
+                    if config.decentralizedFusion
                         preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
                         preDetectionNodeIDs = cell(Nc, mc.numberOfTrialsParallel);
                         % preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
@@ -636,30 +387,20 @@ classdef spu < handle
                     preDetection = false;
                     preDetectionCellIDs = {};
                 end
-                if isnan(obj.configurationCompression.numberOfTargets)
-                    targetThreshold = config.threshold;
-                    numberOfIterations = Ns;
-                else
-                    targetThreshold = -Inf;
-                    numberOfIterations = obj.configurationCompression.numberOfTargets;
-                    if numberOfIterations > Ns
-                        error('Number of targets cannot be larger than the number of samples');
-                    end
-                end
+
+                targetThreshold = config.detector.globalThreshold;
+                numberOfIterations = Ns;
+
                 switch obj.detectionAlgorithm
-                    case "OMPjoint"
+                    case "OMPjoint" % space-time
                         numOfParallelOpts = Nrxch*Ntxrx;
                         numOfSamples = Ns;
-                    case "OMP"
+                    case "OMP" % vectorized
                         % check
                         numOfParallelOpts = 1;
                         numOfSamples = Ns*Nrxch*Ntxrx;
                         dict = reshape(permute(dict, [1 3 4 2]), numOfSamples, []); % Ns_i*Nrxch*Ntxch x Ni
                         measurements = reshape(measurements, numOfSamples, 1, 1, []); % Ns_i*Nrxch*Ntxch x 1 x 1 x Nmcp
-                    case "CoSaMP"
-                        error('not implemented');
-                        %%% not implemented
-                        % report = CoSaMP(dict, measurements(:), obj.configurationCompression.numberOfTargets);
                 end
                 % figure(100); plot(preDetectionNumberOfNodes(:, 1));
                 for mcID = 1 : mc.numberOfTrialsParallel
@@ -676,56 +417,34 @@ classdef spu < handle
                     residual = permute(measurements(:, :, :, mcID), [1 4 2 3]); % (Ns x 1 x Nrxch x Ntxch) or (Ns*Nrxch*Ntxch x 1)
                     for currentIterationID = 1 : numberOfIterations
                         preDetectionSuccessful = true;
-                        if ~preDetection || (preDetection && ~config.numberOfNodesAdaptive)
+                        if ~preDetection || (preDetection && ~config.decentralizedFusion)
                             % predetection kapali ise veya acik bile olsa #nodes adaptive degilse
                             projectedSignal = pagemtimes(dict, 'ctranspose', residual, 'none');
-                            switch obj.processingAlgorithm
-                                case 1
-                                    integratedSignal = real(sum(w.*projectedSignal, [3 4])); % coherent integration
-                                    integratedSignal = sign(integratedSignal).*integratedSignal.^2;
-                                    switch obj.network.networkMode
-                                        case 'monoStatic'
-                                            switch obj.network.activeReceivingNodes(fusionID).beamformingMode
-                                                case 'bypass'
-                                                    integratedSignal = integratedSignal./Nrxch;
-                                                otherwise
-                                            end
-                                    end
-                                case 2
+                            switch obj.globalFusionRule
+                                case "EGC"
+                                    integratedSignal = abs(sum(projectedSignal, [3 4])).^2; % coherent integration
+                                case "MRC"
                                     integratedSignal = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
-                                case {3, 5}
-                                    integratedSignal = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
-                                case 6
+                                case "SLC"
                                     integratedSignal = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                case "WSLC"
+                                    integratedSignal = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
                             end
                         else
                             numberOfCells = numel(preDetectionCellIDs{mcID});
                             integratedSignal = zeros(numberOfCells, 1);
-                            if config.numberOfStrongestNodes
-                                strongestNodeIDs = cell(Nc, 1);
-                            end
                             for cellIndex = 1 : numberOfCells
                                 cellID = preDetectionCellIDs{mcID}(cellIndex);
                                 projectedSignal = pagemtimes(dict(:, cellID, preDetectionNodeIDs{cellID, mcID}), 'ctranspose', residual(:, 1, preDetectionNodeIDs{cellID, mcID}), 'none');
-                                if ~config.numberOfStrongestNodes
-                                    switch obj.processingAlgorithm
-                                        case 1
-                                            integratedSignal(cellIndex, :) = real(sum(w.*projectedSignal, [3 4])); % coherent integration
-                                            integratedSignal(cellIndex, :) = sign(integratedSignal(cellIndex, :)).*integratedSignal(cellIndex, :).^2;
-                                        case 2
-                                            integratedSignal(cellIndex, :) = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
-                                        case {3, 5}
-                                            integratedSignal(cellIndex, :) = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
-                                        case 6
-                                            integratedSignal(cellIndex, :) = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
-                                    end
-                                else
-                                    switch obj.processingAlgorithm
-                                        case 6
-                                            [projectedSignalPowers, strongestNodeIndices] = sort(sort(abs(projectedSignal).^2, 4, 'descend'), 3, 'descend');
-                                            integratedSignal(cellIndex, :) = sum(projectedSignalPowers(:, :, 1 : min(end, config.numberOfStrongestNodes), :), [3 4]); % noncoherent integration
-                                            strongestNodeIDs{cellID} = preDetectionNodeIDs{cellID, mcID}(strongestNodeIndices(min(end, config.numberOfStrongestNodes)));
-                                    end
+                                switch obj.globalFusionRule
+                                    case "EGC"
+                                        integratedSignal(cellIndex, :) = abs(sum(projectedSignal, [3 4])).^2; % coherent integration
+                                    case "MRC"
+                                        integratedSignal(cellIndex, :) = abs(sum(w.*projectedSignal, [3 4])).^2; % coherent integration
+                                    case "WSLC"
+                                        integratedSignal(cellIndex, :) = sum(w.*abs(projectedSignal).^2, [3 4]); % noncoherent integration
+                                    case "SLC"
+                                        integratedSignal(cellIndex, :) = sum(abs(projectedSignal).^2, [3 4]); % noncoherent integration
                                 end
                             end
                         end
@@ -734,7 +453,7 @@ classdef spu < handle
                             [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
                         else
                             if ~isempty(preDetectionCellIDs{mcID})
-                                if config.numberOfNodesAdaptive
+                                if config.decentralizedFusion
                                     % predetection acik ama #nodes adaptive
                                     [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal, [], 1);
                                 else
@@ -765,22 +484,17 @@ classdef spu < handle
                             thresholdReached = true;
                             break;
                         end
-                        if preDetection && config.numberOfNodesAdaptive
+                        if preDetection && config.decentralizedFusion
                             if currentIterationID == 1
                                 report(fusionID, mcID).numberOfPreDetections = false(Nrxch*Ntxrx, 1);
-                                if ~config.numberOfStrongestNodes
-                                    numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
-                                    report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
-                                else
-                                    numberOfUtilizedNodes = min(numel(preDetectionNodeIDs{cellID, mcID}), config.numberOfStrongestNodes);
-                                    report(fusionID, mcID).numberOfPreDetections(strongestNodeIDs{cellID}) = true;
-                                end
+                                numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
+                                report(fusionID, mcID).numberOfPreDetections(preDetectionNodeIDs{cellID, mcID}) = true;
                                 report(fusionID, mcID).numberOfUtilizedNodes = numberOfUtilizedNodes;
                             end
                             if numberOfUtilizedNodes ~= obj.network.numberOfActiveBistaticPairs
                                 % fprintf('pre detection is successful at %d nodes\n', numberOfUtilizedNodes);
                             end
-                            if maximumPowerHistory(currentIterationID) < targetThresholdAdaptive(numberOfUtilizedNodes)
+                            if maximumPowerHistory(currentIterationID) < targetThreshold
                                 thresholdReached = true;
                                 break;
                             end
@@ -861,6 +575,42 @@ classdef spu < handle
             end
         end
 
+        function y = get.signalsMatchFilteredTrials(obj)
+            % (1 x Nrx cell of Ns + L - 1 x Nrxch x Ntxch Ncmp matrix) Ncmp : number of parallel trials
+            mc = obj.monteCarlo;
+            matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
+            Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
+            signalsBeamformed = obj.interfaces.signalBeamformed;
+            y = cell(1, obj.network.numberOfActiveReceivingNodes);
+            for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+                numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
+                switch obj.network.networkMode
+                    case 'multiStatic'
+                        numberOfTransmitters = obj.network.numberOfActiveTransmittingNodes;
+                    case 'monoStatic'
+                        numberOfTransmitters = 1;
+                end
+                y{rxID} = zeros(Ns + size(matchFilters, 1) - 1, numberOfTotalChannels, numberOfTransmitters, mc.numberOfTrialsParallel);
+                s = signalsBeamformed{rxID}; % Ns x Nrxch x Ntxch x Nmcp matrix
+                for txID = 1 : numberOfTransmitters
+                    switch obj.network.networkMode
+                        case 'multiStatic'
+                            matchFilter = conj(matchFilters(:, rxID, txID));
+                        case 'monoStatic'
+                            matchFilter = conj(matchFilters(:, rxID, obj.network.monoStaticTransmitterIDs(rxID)));
+                    end
+                    for chID = 1 : numberOfTotalChannels
+                        for mcID = 1 : mc.numberOfTrialsParallel
+                            signalChannel = s(:, chID, txID, mcID);
+                            signalChannel(isinf(signalChannel)) = 0;
+                            y{rxID}(:, chID, txID, mcID) = conv(signalChannel, matchFilter);
+                        end
+                    end
+                end
+                y{rxID} = y{rxID}./sqrt(obj.noisePowersPerSample_W(rxID));
+            end
+        end
+
         function Y = get.signalsIntegrated(obj)
             % (Ni x Nmcp matrix)
             if isempty(obj.integrationIndices)
@@ -879,17 +629,8 @@ classdef spu < handle
                     if obj.network.passiveNetwork % Passive networks
                     else 
                         Y = zeros(prod(obj.gridSize), 1, 1, mc.numberOfTrialsParallel);
-                        switch obj.processingAlgorithm
-                            case 1 % Coherent detector, deterministic signal
-                                for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                                        %%% which channel not implemented
-                                        Y(visibleZone, :, :, :) = Y(visibleZone, :, :, :) + w(:, txID, rxID).*obj.signalsMatchFiltered{rxID}(obj.integrationIndices(txID, rxID, :), ceil(end/2), txID, :);
-                                    end
-                                end
-                                Y = real(Y);
-                                Y = sign(Y).*Y.^2;
-                            case 2 % Coherent detector, fully correlated stochastic signal
+                        switch obj.globalFusionRule
+                            case {"MRC", "EGC"}
                                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                                     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                                         %%% which channel not implemented
@@ -897,25 +638,18 @@ classdef spu < handle
                                     end
                                 end
                                 Y = abs(Y).^2;
-                            case {3, 5} % Square-law envelope detectors
+                            case {"SLC", "WSLC"}
                                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                                     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                                         %%% which channel not implemented
                                         Y(visibleZone, :, :, :) = Y(visibleZone, :, :, :) + w(:, txID, rxID).*abs(obj.signalsMatchFiltered{rxID}(obj.integrationIndices(txID, rxID, :), ceil(end/2), txID, :)).^2; 
                                     end
                                 end
-                            case 4 % Linear-law envelope detector
+                            case {"LLC", "WLLC"}
                                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
                                     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                                         %%% which channel not implemented
                                         Y(visibleZone, :, :, :) = Y(visibleZone, :, :, :) + w(:, txID, rxID).*abs(obj.signalsMatchFiltered{rxID}(obj.integrationIndices(txID, rxID, :), ceil(end/2), txID, :));
-                                    end
-                                end
-                            case 6 % Square-law envelope detectors
-                                for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                                        %%% which channel not implemented
-                                        Y(visibleZone, :, :, :) = Y(visibleZone, :, :, :) + abs(obj.signalsMatchFiltered{rxID}(obj.integrationIndices(txID, rxID, :), ceil(end/2), txID, :)).^2; 
                                     end
                                 end
                         end
@@ -928,46 +662,9 @@ classdef spu < handle
                         monoStaticTXIDs = obj.network.monoStaticTransmitterIDs(rxID);
                         y = zeros(prod(obj.gridSize), numberOfTotalChannels, 1, mc.numberOfTrialsParallel);
                         y(visibleZone, :, :, :) = obj.signalsMatchFiltered{rxID}(obj.integrationIndices(monoStaticTXIDs, rxID, :), :, :, :);
-                        switch obj.processingAlgorithm
-                            case 1 % Coherent detector, deterministic signal
-                                Y{rxID} = real(y);
-                                Y{rxID} = sign(Y{rxID}).*Y{rxID}.^2;
-                            otherwise
-                                Y{rxID} = abs(y).^2;
-                        end
+                        Y{rxID} = abs(y).^2;
                         Y{rxID} = permute(Y{rxID}, [1 2 4 3]);
                     end
-            end
-        end
-
-        function Y = get.signalsIntegratedDirectly(obj)
-            if isempty(obj.signalsMatchFiltered)
-                Y = [];
-                fprintf('"signalsMatchFiltered" is empty\n');
-                return;
-            end
-            if isscalar(obj.signalsMatchFiltered{1})
-                obj.setmatchfilteredsignals;
-            end
-            mc = obj.monteCarlo;
-            switch obj.network.networkMode
-                case "multiStatic"
-                    sizeMF = [obj.network.activeReceivingNodes.numberOfSamplesPerCPI] + obj.network.pulseWidthSample(:, 1).' - 1;
-                    Y = zeros([sizeMF, mc.numberOfTrialsParallel]);
-                    switch obj.processingAlgorithm
-                        case 1 % Coherent detector, deterministic signal
-                        case 2 % Coherent detector, fully correlated stochastic signal
-                        case {3, 5, 6} % Square-law envelope detectors
-                            for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                                for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                                    %%% which channel not implemented
-                                    Y = Y + shiftdim(abs(obj.signalsMatchFiltered{rxID}(:, ceil(end/2), :, :)).^2, 1 - rxID); 
-                                end
-                            end
-                        case 4 % Linear-law envelope detector
-                    end
-                case "monoStatic"
-                    Y = nan;
             end
         end
 
@@ -986,14 +683,14 @@ classdef spu < handle
                 samples = -L : N;
                 numberOfSamples = length(samples);
                 T{rxID} = zeros(numberOfSamples, numberOfTotalChannels, mc.numberOfTrialsParallel);
-                for sampleID = 1 : numberOfSamples % OSCFAR
+                for sampleID = 1 : numberOfSamples % CACFAR
                     trainingStart = sampleID + NGC + 1;
                     upperTraining = min(trainingStart : trainingStart + NTC - 1, numberOfSamples);
                     trainingStart = sampleID - NGC - 1;
                     lowerTraining = max(trainingStart - NTC + 1 : trainingStart, 1);
                     sampleIdx = [lowerTraining, upperTraining];
                     Nt = length(sampleIdx);
-                    alpha = Nt.*(config.PFA.^(-1/Nt) - 1);
+                    alpha = Nt.*(config.localPFA.^(-1/Nt) - 1);
                     T{rxID}(sampleID, :, :) = alpha.*mean(abs(obj.signalsMatchFiltered{rxID}(sampleIdx, :, :, :)).^2);
                 end
             end
@@ -1038,19 +735,13 @@ classdef spu < handle
                         txID = obj.network.monoStaticTransmitterIDs(rxID);
                         L = obj.network.pulseWidthSample(rxID, txID) - 1;
                         Ns = N + L;
-                        T = config.threshold*ones(Ns*numberOfTotalChannels, mc.numberOfTrialsParallel);
+                        T = config.detector.globalThreshold*ones(Ns*numberOfTotalChannels, mc.numberOfTrialsParallel);
                         obs = obj.signalsMatchFiltered{rxID};
                         absObs = reshape(abs(obs), [], mc.numberOfTrialsParallel);
-                        switch obj.processingAlgorithm
-                            case 1 % Coherent detector, deterministic signal
-                                thObs = real(obj.signalsMatchFiltered{rxID});
-                                thObs = sign(thObs).*thObs.^2;
-                            otherwise % Square-law envelope detectors
-                                if obj.configurationMonostatic.CFAR
-                                    T = reshape(obj.thresholdCFAR{rxID}, [], mc.numberOfTrialsParallel);
-                                end
-                                thObs = abs(obj.signalsMatchFiltered{rxID}).^2;
+                        if obj.configurationMonostatic.CFAR
+                            T = reshape(obj.thresholdCFAR{rxID}, [], mc.numberOfTrialsParallel);
                         end
+                        thObs = abs(obj.signalsMatchFiltered{rxID}).^2;
                         thObs = reshape(thObs, [], mc.numberOfTrialsParallel);
                         for mcID = 1 : mc.numberOfTrialsParallel
                             switch obj.network.activeTransmittingNodes(txID).transmissionType
@@ -1164,8 +855,6 @@ classdef spu < handle
                     if isempty(obj.compressionReport) || isempty(obj.compressionReport(1).complexAmplitudes)
                         obj.applycompression;
                     end
-                case "CoSaMP"
-                    error("not implemented");
             end
             config = obj.configuration;
             mc = obj.monteCarlo;
@@ -1175,16 +864,14 @@ classdef spu < handle
                     for mcID = 1 : mc.numberOfTrialsParallel
                         switch obj.detectionAlgorithm
                             case "thresholding"
-                                idx{mcID} = find(obj.signalsIntegrated(:, :, mcID) > config.threshold);
+                                idx{mcID} = find(obj.signalsIntegrated(:, :, mcID) > config.detector.globalThreshold);
                             case "peak"
                                 z = obj.signalsIntegrated;
-                                idx{mcID} = find(z(:, :, mcID) > config.threshold);
+                                idx{mcID} = find(z(:, :, mcID) > config.detector.globalThreshold);
                                 [~, peakIndex] = max(z(idx{mcID}, :, mcID));
                                 idx{mcID} = idx{mcID}(peakIndex);
                             case {"OMPjoint", "OMP"}
                                 idx{mcID} = obj.compressionReport(1, mcID).cellIDs;
-                            case "CoSaMP"
-                                error("not implemented");
                         end
                     end
                     if ~obj.network.passiveNetwork % Single transmitter networks
@@ -1193,7 +880,7 @@ classdef spu < handle
                 case "monoStatic"
                     idx = cell(1, obj.network.numberOfActiveReceivingNodes);
                     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                        T = config.threshold;
+                        T = config.detector.globalThreshold;
                         numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
                         switch obj.detectionAlgorithm
                             case "thresholding"
@@ -1219,8 +906,6 @@ classdef spu < handle
                                 for mcID = 1 : mc.numberOfTrialsParallel
                                     idx{rxID}{mcID} = obj.compressionReport(rxID, mcID).cellIDs;
                                 end
-                            case "CoSaMP"
-                                error("not implemented");
                         end
                     end
             end
@@ -1385,24 +1070,6 @@ classdef spu < handle
             end
         end
 
-        function C = get.covarianceMatrixInitial(obj)
-            switch obj.network.networkMode
-                case "multiStatic"
-                case "monoStatic"
-                    lambda = [obj.network.transmittingNodes.carrierWavelength];
-                    arraysRX = [obj.network.receivingNodes.array];
-                    N = [arraysRX.numberOfElements];
-                    d = [arraysRX.spacing];
-                    azimuthBeamWidth = 70*lambda./(N(1, :).*d(1, :));
-                    elevationBeamWidth = 70*lambda./(N(2, :).*d(2, :));
-                    rangeResolution = obj.speedOfLight.*[obj.network.receivingNodes.samplingPeriod]/2;
-                    C = zeros(3, 3, obj.network.numberOfActiveReceivingNodes);
-                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                        C(:, :, rxID) = diag([rangeResolution(rxID), elevationBeamWidth(rxID), azimuthBeamWidth(rxID)]); % R, theta, phi
-                    end
-            end
-        end
-
         function int = get.hypothesizedInterface(obj)
             gridScan = obj.gridPointsMesh;
             hypothesizedPositions = reshape(permute(cat(4, gridScan.x, gridScan.y, gridScan.z), [4 1 2 3]), [3 prod(obj.gridSize)]);
@@ -1416,7 +1083,8 @@ classdef spu < handle
                 'noise', 0, ...
                 'directPath', 0, ...
                 'pathLoss', 0, ...
-                'spatialCoherency', 'deterministic');
+                'spatialCoherency', 'deterministic', ...
+                'swerling', 0);
         end
 
         %%% set methods
@@ -1429,13 +1097,13 @@ classdef spu < handle
             else
                 backOfArray = false(prod(obj.gridSize), 1);
             end
-            currentSynchronization = obj.network.fractionalDelayMode;
-            cleanup = onCleanup(@() resetsynchronization(obj, currentSynchronization));
+            currentFractionalDelayMode = obj.network.fractionalDelayMode;
+            cleanup = onCleanup(@() resetfractionaldelaymode(obj, currentFractionalDelayMode));
             obj.network.settingsnetwork('fractionalDelayMode', 'off');
             uncoveredZone = squeeze(~any(interfaceGrid.waveformReceivedFromScatterers, [1 2 4]));
             obj.blindZone = backOfArray | uncoveredZone;
-            function resetsynchronization(obj, currentSynchronization)
-                obj.network.settingsnetwork('fractionalDelayMode', currentSynchronization);
+            function resetfractionaldelaymode(obj, currentFractionalDelayMode)
+                obj.network.settingsnetwork('fractionalDelayMode', currentFractionalDelayMode);
             end
         end
 
@@ -1447,7 +1115,11 @@ classdef spu < handle
             numberOfVisibleCells = nnz(visibleZone);
             hypothesizedTimeDelays = obj.hypothesizedInterface.timeDelay(:, :, visibleZone); % (Ntx x Nrx x Ni matrix)
             obj.expectedCellObservations = 10.^(.5*obj.hypothesizedInterface.receivedPowerFromScatterers_dBW(:, :, visibleZone)); % (Ntx x Nrx x Ni matrix)
+            %%% dictionaryde zaten spatial phaselar var
+            % t = [obj.network.activeReceivingNodes.samplingInstants]; % Ns x Nrx matrix
+            % demodulator = exp(1j*2*pi*shiftdim([obj.network.activeTransmittingNodes.carrierFrequency], -1).*t);
             % obj.expectedCellObservations = obj.expectedCellObservations.*exp(1j*phase); % not implemented
+            ;
             obj.integrationIndices = ones(obj.network.numberOfActiveTransmittingNodes, obj.network.numberOfActiveReceivingNodes, numberOfVisibleCells);
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 Ts = obj.network.activeReceivingNodes(rxID).samplingPeriod;
@@ -1473,8 +1145,8 @@ classdef spu < handle
             end
             visibleZone = ~obj.blindZone;
             numberOfVisibleCells = nnz(visibleZone);
-            currentSynchronization = obj.network.fractionalDelayMode;
-            cleanup = onCleanup(@() resetsynchronization(obj, currentSynchronization));
+            currentFractionalDelayMode = obj.network.fractionalDelayMode;
+            cleanup = onCleanup(@() resetfractionaldelaymode(obj, currentFractionalDelayMode));
             obj.network.settingsnetwork('fractionalDelayMode', 'off');
             signals = obj.hypothesizedInterface.signalReceivedFromScatterers; % Ns x 1 x Nt x Ntx x M
             % pos = hypothesizedPositions(:, (all(abs(squeeze(signals{1}(:, :, :, :, 1))) == 0)));
@@ -1498,8 +1170,8 @@ classdef spu < handle
                     end
                     obj.dictionaryCompression = dict;
             end
-            function resetsynchronization(obj, currentSynchronization)
-                obj.network.settingsnetwork('fractionalDelayMode', currentSynchronization);
+            function resetfractionaldelaymode(obj, currentFractionalDelayMode)
+                obj.network.settingsnetwork('fractionalDelayMode', currentFractionalDelayMode);
             end
         end
 
@@ -1523,37 +1195,41 @@ classdef spu < handle
         function configure(obj, options)
             arguments
                 obj
-                options.PFA (1, 1) double {mustBeNonnegative} = obj.configuration.PFA
-                options.prePFA (1, 1) double {mustBeNonnegative} = obj.configuration.prePFA
-                options.numberOfNodesAdaptive (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.numberOfNodesAdaptive, [0, 1])} = obj.configuration.numberOfNodesAdaptive
-                options.numberOfStrongestNodes (1, 1) {mustBeNonnegative, mustBeInteger} = obj.configuration.numberOfStrongestNodes
-                options.numberOfTargets (1, 1) double = obj.configurationCompression.numberOfTargets
-                options.neighbourOffset (1, 1) double {mustBeNonnegative} = obj.configurationCompression.neighbourOffset
-                options.processingAlgorithm (1, 1) {mustBeInteger, mustBeInRange(options.processingAlgorithm, 1, 6)} = obj.processingAlgorithm
-                options.detectionAlgorithm (1, 1) string {mustBeMember(options.detectionAlgorithm, ["thresholding", "peak", "CoSaMP", "OMP", "OMPjoint"])} = obj.detectionAlgorithm
-                options.preDetectionAlgorithm (1, 1) string {mustBeMember(options.preDetectionAlgorithm, ["thresholding", "OSCFAR"])} = obj.preDetectionAlgorithm
+                options.globalPFA (1, 1) double {mustBeNonnegative} = obj.configuration.globalPFA
+                options.localPFA (1, 1) double {mustBeNonnegative} = obj.configuration.localPFA
+                options.decentralizedFusion (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.decentralizedFusion, [0, 1])} = obj.configuration.decentralizedFusion
+                options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["SLC", "WSLC", "BC", "CVBC", "LLC", "WLLC", "NSLC", "SC", "PSC", "EGC", "MRC"])} = "SLC"
+                    %%% LRT: widely seperated receivers | spatially i.i.d circularly symmetric complex gaussian signal model
+                    % SLC: Square Law Combining (LRT under equal SNR)
+                    % WSLC: Weighted Sqaure Law Combining (LRT under different SNR)
+    
+                    %%% Binary
+                    % BC: Binary Combining (LRT under equal SNR)
+                    % CVBC: Chair-Varshney Binary Combining (LRT under different SNR)
+    
+                    %%% Other
+                    % LLC: Linear Law Combining
+                    % WLLC: Weighted Linear Law Combining
+                    % NSLC: Normalized Square Law Combining
+                    % SC: Selective Combining (Partial Selective Combining K = 1)
+                    % PSC: Partial Selective Combining (Combine largest K samples)
+    
+                    %%% LRT: phase asynchronous closely spaced receivers | spatially i.i.d uniform phase, fully correlated amplitude
+    
+                    %%% LRT: phase synchronous closely spaced receivers | spatially fully correlated circularly symmetric complex gaussian signal model
+                    % EGC: Equal Gain Combining
+                    % MRC: Matched Filter
+                options.detectionAlgorithm (1, 1) string {mustBeMember(options.detectionAlgorithm, ["thresholding", "peak", "OMP", "OMPjoint"])} = obj.detectionAlgorithm
+                options.preDetectionAlgorithm (1, 1) string {mustBeMember(options.preDetectionAlgorithm, ["thresholding", "CACFAR"])} = obj.preDetectionAlgorithm
                 options.numberOfTrials (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrials
                 options.numberOfTrialsParallel (1, 1) {mustBeNonnegative, mustBeInteger} = obj.monteCarlo.numberOfTrialsParallel
                 options.seed (1, 1) {mustBeNonnegative, mustBeInteger, mustBeLessThan(options.seed, 4294967296)} = 0
                 options.seedShuffle (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.seedShuffle, [0, 1])} = obj.seedShuffle
             end
-            obj.configuration.PFA = options.PFA;
-            obj.configuration.prePFA = options.prePFA;
-            obj.configuration.numberOfNodesAdaptive = options.numberOfNodesAdaptive;
-            obj.configuration.numberOfStrongestNodes = options.numberOfStrongestNodes;
-            obj.configurationCompression.numberOfTargets = options.numberOfTargets;
-            obj.configurationCompression.neighbourOffset = options.neighbourOffset;
-            obj.processingAlgorithm = options.processingAlgorithm;
-            switch obj.network.networkCoherency
-                case "short-term coherent"
-                    if any(obj.processingAlgorithm, [1 2])
-                        warning('Processing algorithm %d cannot be used for short-term coherent networks', obj.processingAlgorithm);
-                    end
-                case "incoherent"
-                    if any(obj.processingAlgorithm, [1 2 4])
-                        warning('Processing algorithm %d cannot be used for incoherent networks', obj.processingAlgorithm);
-                    end
-            end
+            obj.configuration.globalPFA = options.globalPFA;
+            obj.configuration.localPFA = options.localPFA;
+            obj.configuration.decentralizedFusion = options.decentralizedFusion;
+            obj.globalFusionRule = options.globalFusionRule;
             obj.detectionAlgorithm = options.detectionAlgorithm;
             obj.preDetectionAlgorithm = options.preDetectionAlgorithm;
             mc = obj.monteCarlo;
@@ -1618,28 +1294,27 @@ classdef spu < handle
                 options.randomOnCell (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.randomOnCell, [0, 1])} = 0
                 options.numberOfTargets (1, 1) double {mustBePositive} = inf
             end
-            config = obj.configuration;
             mc = obj.monteCarlo;
+            % config = obj.configuration;
             numberOfTotalTrials = mc.numberOfTrials*mc.numberOfTrialsParallel;
-            originalNumberOfTargets = obj.configurationCompression.numberOfTargets;
             previousCompressionReport = obj.compressionReport;
-            cleanup = onCleanup(@() cleanupFunction(obj, originalNumberOfTargets, previousCompressionReport));
-            obj.configure("numberOfTargets", nan);
+            cleanup = onCleanup(@() cleanupFunction(obj, previousCompressionReport));
             gridScan = obj.gridPointsMesh;
             dimensions = find(size(gridScan.x) ~= 1);
             width = zeros(3, 1);
             width(dimensions) = obj.gridResolution(dimensions);
             obj.resolutionSimulationReport = struct( ...
-                'PD', [], ...
-                'PFA', [], ...
-                'SNRsMean', [], ...
-                'SNRmodeled', [], ...
-                'PDmodeled', [], ...
+                'globalPDrealized', [], ...
+                'globalPDmodeled', [], ...
+                'globalPFArealized', [], ...
+                'globalPFAmodel', [], ...
+                'meanSNRsRealized', [], ...
+                'meanSNRsModel', [], ...
                 'numberOfUtilizedNodes', []);
-            obj.resolutionSimulationReport.PD = zeros(prod(obj.gridSize), 1);
-            obj.resolutionSimulationReport.SNRmodeled = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
-            obj.resolutionSimulationReport.PDmodeled = obj.ROC(config.PFA, 10.^(.1*obj.resolutionSimulationReport.SNRmodeled(:)), obj.network.numberOfActiveBistaticPairs);
-            obj.resolutionSimulationReport.SNRsMean = zeros(prod(obj.gridSize), 1);
+            obj.resolutionSimulationReport.globalPDrealized = zeros(prod(obj.gridSize), 1);
+            obj.resolutionSimulationReport.meanSNRsModel = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
+            obj.resolutionSimulationReport.globalPDmodeled = obj.configuration.detector.globalPD;
+            obj.resolutionSimulationReport.meanSNRsRealized = zeros(prod(obj.gridSize), 1);
             obj.resolutionSimulationReport.numberOfUtilizedNodes = zeros(prod(obj.gridSize), 1);
             obj.resolutionSimulationReport.numberOfPreDetections = zeros(obj.network.numberOfActiveBistaticPairs, 1);
             for mcID = 1 : mc.numberOfTrials
@@ -1651,16 +1326,14 @@ classdef spu < handle
                         obj.setmatchfilteredsignals;
                     case {"OMPjoint", "OMP"}
                         obj.applycompression;
-                    case "CoSaMP"
-                        error("not implemented");
                 end
                 idx = obj.hypothesisTestingResults;
                 switch obj.network.networkMode
                     case 'multiStatic'
                         for mcpID = 1 : mc.numberOfTrialsParallel
                             targetCellIDs = idx{mcpID}(1 : min(end, ceil(options.numberOfTargets)));
-                            obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
-                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : min(end - 1, ceil(options.numberOfTargets)));
+                            obj.resolutionSimulationReport.globalPDrealized(targetCellIDs) = obj.resolutionSimulationReport.globalPDrealized(targetCellIDs) + 1/numberOfTotalTrials;
+                            obj.resolutionSimulationReport.meanSNRsRealized(targetCellIDs) = obj.resolutionSimulationReport.meanSNRsRealized(targetCellIDs) + obj.compressionReport(1, mcpID).maximumPowerHistory(1 : min(end - 1, ceil(options.numberOfTargets)));
                             obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) = obj.resolutionSimulationReport.numberOfUtilizedNodes(targetCellIDs) + obj.compressionReport(1, mcpID).numberOfUtilizedNodes(1 : min(end, ceil(options.numberOfTargets)));
                         end
                         obj.resolutionSimulationReport.numberOfPreDetections = sum([obj.compressionReport.numberOfPreDetections], 2);
@@ -1681,37 +1354,32 @@ classdef spu < handle
                             end
                             targetCellIDs = targetCellIDs(uniqueIndices);
                             SNRmonostatic = SNRmonostatic(uniqueIndices);
-                            obj.resolutionSimulationReport.PD(targetCellIDs) = obj.resolutionSimulationReport.PD(targetCellIDs) + 1/numberOfTotalTrials;
-                            obj.resolutionSimulationReport.SNRsMean(targetCellIDs) = obj.resolutionSimulationReport.SNRsMean(targetCellIDs) + SNRmonostatic;
+                            obj.resolutionSimulationReport.globalPDrealized(targetCellIDs) = obj.resolutionSimulationReport.globalPDrealized(targetCellIDs) + 1/numberOfTotalTrials;
+                            obj.resolutionSimulationReport.meanSNRsRealized(targetCellIDs) = obj.resolutionSimulationReport.meanSNRsRealized(targetCellIDs) + SNRmonostatic;
                         end
                 end
                 if ~mod(mcID, 100)
                     fprintf('trial = %d\n', mcID);
                 end
             end
-            obj.resolutionSimulationReport.SNRsMean = 10*log10(obj.resolutionSimulationReport.SNRsMean./obj.resolutionSimulationReport.PD/numberOfTotalTrials);
-            obj.resolutionSimulationReport.SNRsMean(~logical(obj.resolutionSimulationReport.PD)) = -inf;
-            obj.resolutionSimulationReport.numberOfUtilizedNodes = obj.resolutionSimulationReport.numberOfUtilizedNodes./(obj.resolutionSimulationReport.PD*numberOfTotalTrials);
-            function cleanupFunction(obj, originalNumberOfTargets, previousCompressionReport)
+            obj.resolutionSimulationReport.meanSNRsRealized = 10*log10(obj.resolutionSimulationReport.meanSNRsRealized./obj.resolutionSimulationReport.globalPDrealized/numberOfTotalTrials);
+            obj.resolutionSimulationReport.meanSNRsRealized(~logical(obj.resolutionSimulationReport.globalPDrealized)) = -inf;
+            obj.resolutionSimulationReport.numberOfUtilizedNodes = obj.resolutionSimulationReport.numberOfUtilizedNodes./(obj.resolutionSimulationReport.globalPDrealized*numberOfTotalTrials);
+            function cleanupFunction(obj, previousCompressionReport)
                 obj.compressionReport = previousCompressionReport;
                 obj.interfaces.settargetpositions("width", 0);
-                obj.configure("numberOfTargets", originalNumberOfTargets);
             end
         end
 
-        function visualizeresolutionsimulation(obj, options)
+        function fig = visualizeresolutionsimulation(obj, options)
             arguments
                 obj
                 options.saveFigures (1, 1) {mustBeNumericOrLogical, mustBeMember(options.saveFigures, [0, 1])} = false
                 options.monoStaticNetworkRXID (1, 1) {mustBePositive, mustBeInteger} = 1
-                options.saveDirectory (1, :) {mustBeText} = ''
             end
-            if isempty(obj.resolutionSimulationReport.PD)
+            if isempty(obj.resolutionSimulationReport.globalPDrealized)
                 fprintf('resolution simulation had not executed\n');
                 return;
-            end
-            if ~isempty(options.saveDirectory) && ~isfolder(options.saveDirectory) && options.saveFigures
-                mkdir(options.saveDirectory);
             end
             gridScan = obj.gridPointsMesh;
             dimensions = {"x", "y", "z"};
@@ -1723,12 +1391,11 @@ classdef spu < handle
             x2 = obj.gridPoints{2}/1e3;
             visibleZone = reshape(~obj.blindZone, obj.gridSize([2 1 3]));
 
-            PDmodeled = obj.resolutionSimulationReport.PDmodeled(:, options.monoStaticNetworkRXID);
-            SNRmodeled = obj.resolutionSimulationReport.SNRmodeled(:, options.monoStaticNetworkRXID);
-            PD = reshape(obj.resolutionSimulationReport.PD(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
-            SNRsMean = reshape(obj.resolutionSimulationReport.SNRsMean(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            globalPDmodeled = obj.resolutionSimulationReport.globalPDmodeled(:, options.monoStaticNetworkRXID);
+            meanSNRsModel = obj.resolutionSimulationReport.meanSNRsModel(:, options.monoStaticNetworkRXID);
+            globalPDRealized = reshape(obj.resolutionSimulationReport.globalPDrealized(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            meanSNRsRealized = reshape(obj.resolutionSimulationReport.meanSNRsRealized(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
             numberOfUtilizedNodes = reshape(obj.resolutionSimulationReport.numberOfUtilizedNodes(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
-
 
             if ~isempty(obj.interfaces.targets)
                 x = obj.interfaces.targets.position(dims, :)/1e3;
@@ -1737,8 +1404,8 @@ classdef spu < handle
             posTX = [obj.network.activeTransmittingNodes.position]/1e3;
             posRX = posRX(dims, :); posTX = posTX(dims, :);
 
-            fig = figure;
-            img = imagesc(x1, x2, PD);
+            fig(1) = figure;
+            img = imagesc(x1, x2, globalPDRealized);
             xlim([-0.9 0.9]); ylim([0 1.8]);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
@@ -1746,54 +1413,45 @@ classdef spu < handle
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            title(sprintf('Probability of detection (total P_d = %g)', sum(PD, 'all')), sprintf('modeled P_d = %g', PDmodeled)); hold off;
+            title(sprintf('Probability of detection (total P_d = %g)', sum(globalPDRealized, 'all')), sprintf('modeled P_d = %g', globalPDmodeled)); hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "PD";
-            img.DataTipTemplate.DataTipRows(3).Value = PD;
+            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            img.DataTipTemplate.DataTipRows(3).Value = globalPDRealized;
             hold on;
             if ~isempty(obj.interfaces.targets)
                 plot(x(1, :), x(2, :), '+g', 'LineWidth', 2);
             end
             plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
             plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
-            savePath = fullfile(options.saveDirectory, 'PD.fig');
             hold off; drawnow;
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
+
+            fig(2) = figure;
+            img = imagesc(x1, x2, meanSNRsRealized);
+            colorbar; colormap('default');
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            set(img, 'AlphaData', visibleZone & ~isinf(meanSNRsRealized));
+            delete(datatip(img, 2, 2));
+            grid off; grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel);
+            title('realized SNR with straddle loss averaged over trials', sprintf('modeled SNR = %g', meanSNRsModel)); hold off;
+            img.DataTipTemplate.DataTipRows(1).Label = "x";
+            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            img.DataTipTemplate.DataTipRows(2).Label = "y";
+            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            img.DataTipTemplate.DataTipRows(3).Value = meanSNRsRealized;
+            hold on;
+            if ~isempty(obj.interfaces.targets)
+                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
             end
+            plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
+            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
+            hold off; drawnow;
 
-            % fig = figure;
-            % img = imagesc(x1, x2, SNRsMean);
-            % colorbar; colormap('default');
-            % ax = gca; set(ax, 'Ydir', 'Normal');
-            % set(img, 'AlphaData', visibleZone & ~isinf(SNRsMean));
-            % delete(datatip(img, 2, 2));
-            % grid off; grid on; grid minor;
-            % xlabel(xLabel); ylabel(yLabel);
-            % title('realized SNR with straddle loss averaged over trials', sprintf('modeled SNR = %g', SNRmodeled)); hold off;
-            % img.DataTipTemplate.DataTipRows(1).Label = "x";
-            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            % img.DataTipTemplate.DataTipRows(2).Label = "y";
-            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            % img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            % img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
-            % hold on;
-            % if ~isempty(obj.interfaces.targets)
-            %     plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
-            % end
-            % plot(posRX(1, :), posRX(2, :), 'xb', 'LineWidth', 2);
-            % plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 2);
-            % hold off; drawnow;
-            % savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
-            % if ~exist(savePath, 'file') && options.saveFigures
-            %     savefig(fig, savePath);
-            % end
-
-
-            fig = figure;
+            fig(3) = figure;
             img = imagesc(x1, x2, numberOfUtilizedNodes);
             xlim([-0.9 0.9]); ylim([0 1.8]);
             colorbar; colormap('default');
@@ -1820,10 +1478,6 @@ classdef spu < handle
                 "VerticalAlignment", "bottom", ...
                 "HorizontalAlignment", "left");
             hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'numberOfUtilizedNodes.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
         end
 
         function simulatecoverage(obj, options)
@@ -1831,14 +1485,14 @@ classdef spu < handle
                 obj
                 options.meanRCS_dbsm (1, 1) double = 0
                 options.onCellCenters (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.onCellCenters, [0, 1])} = 0; 
+                options.neighbourOffset (1, 1) double {mustBeNonnegative} = 1
             end
             mc = obj.monteCarlo;
+            config = obj.configuration;
             numberOfTotalTrials = mc.numberOfTrials*mc.numberOfTrialsParallel;
             originalTargets = obj.interfaces.targets;
-            originalNumberOfTargets = obj.configurationCompression.numberOfTargets;
             previousCompressionReport = obj.compressionReport;
-            cleanup = onCleanup(@() cleanupFunction(obj, originalTargets, originalNumberOfTargets, previousCompressionReport));
-            obj.configure("numberOfTargets", nan);
+            cleanup = onCleanup(@() cleanupFunction(obj, originalTargets, previousCompressionReport));
             gridScan = obj.gridPointsMesh;
             dimensions = find(size(gridScan.x) ~= 1);
             visibleZone = ~obj.blindZone;
@@ -1849,13 +1503,16 @@ classdef spu < handle
             width(dimensions) = obj.gridResolution(dimensions);
             obj.coverageSimulationReport = struct( ...
                 'targetCellIDs', [], ...
-                'PD', [], ...
-                'PFA', [], ...
-                'SNRs', [], ...
-                'SNRsMean', []);
-            obj.coverageSimulationReport.PD = zeros(prod(obj.gridSize), 1);
-            obj.coverageSimulationReport.SNRs = -inf(prod(obj.gridSize), 1);
-            obj.coverageSimulationReport.SNRsMean = zeros(prod(obj.gridSize), 1);
+                'globalPDrealized', [], ...
+                'globalPDmodel', [], ...
+                'globalPFArealized', [], ...
+                'globalPFAmodel', [], ...
+                'meanSNRsModel', [], ...
+                'meanSNRsRealized', []);
+            obj.coverageSimulationReport.globalPDrealized = zeros(prod(obj.gridSize), 1);
+            obj.coverageSimulationReport.globalPDmodel = zeros(prod(obj.gridSize), 1);
+            obj.coverageSimulationReport.meanSNRsModel = -inf(prod(obj.gridSize), 1);
+            obj.coverageSimulationReport.meanSNRsRealized = zeros(prod(obj.gridSize), 1);
             visibleCellIDs = 1 : size(cellPositions, 2); %% ayar
             numberOfCells = length(visibleCellIDs);
             targetCellIDs = find(visibleZone);
@@ -1863,13 +1520,16 @@ classdef spu < handle
             obj.coverageSimulationReport.targetCellIDs = targetCellIDs;
             targetPositions = zeros(3, numberOfCells);
             targetPositions(dimensions, :) = cellPositions(dimensions, visibleCellIDs);
+            currentDetector = config.detector;
             for targetID = 1 : numberOfCells
                 targetCellID = targetCellIDs(targetID);
-                targetNeighbourCellIDs = obj.neighbourssquarewindow(targetCellID, "offset", obj.configurationCompression.neighbourOffset);
+                targetNeighbourCellIDs = obj.neighbourssquarewindow(targetCellID, "offset", options.neighbourOffset);
                 obj.interfaces.settargets(target( ...
                     "position", targetPositions(:, targetID), ...
                     "meanRCS_dbsm", options.meanRCS_dbsm));
-                obj.coverageSimulationReport.SNRs(targetCellID) = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
+                obj.coverageSimulationReport.meanSNRsModel(targetCellID) = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
+                currentDetector.setSNR(10*log10(mean(obj.inputSNR_lin, 4)).');
+                obj.coverageSimulationReport.globalPDmodel(targetCellID) = currentDetector.globalPD;
                 for mcID = 1 : mc.numberOfTrials
                     if ~options.onCellCenters
                         obj.interfaces.settargetpositions("width", width);
@@ -1879,8 +1539,6 @@ classdef spu < handle
                             obj.setmatchfilteredsignals;
                         case {"OMPjoint", "OMP"}
                             obj.applycompression;
-                        case "CoSaMP"
-                            error("not implemented");
                     end
                     idx = obj.hypothesisTestingResults;
                     switch obj.network.networkMode
@@ -1888,8 +1546,8 @@ classdef spu < handle
                             for mcpID = 1 : mc.numberOfTrialsParallel
                                 targetIndex = ismember(idx{mcpID}, targetNeighbourCellIDs);
                                 if any(targetIndex)
-                                    obj.coverageSimulationReport.PD(targetCellID) = obj.coverageSimulationReport.PD(targetCellID) + 1/numberOfTotalTrials;
-                                    obj.coverageSimulationReport.SNRsMean(targetCellID) = obj.coverageSimulationReport.SNRsMean(targetCellID) + mean(obj.compressionReport(1, mcpID).maximumPowerHistory(find(targetIndex)));
+                                    obj.coverageSimulationReport.globalPDrealized(targetCellID) = obj.coverageSimulationReport.globalPDrealized(targetCellID) + 1/numberOfTotalTrials;
+                                    obj.coverageSimulationReport.meanSNRsRealized(targetCellID) = obj.coverageSimulationReport.meanSNRsRealized(targetCellID) + mean(obj.compressionReport(1, mcpID).maximumPowerHistory(find(targetIndex)));
                                 end
                             end
                         case 'monoStatic'
@@ -1905,8 +1563,8 @@ classdef spu < handle
                                     end
                                 end
                                 if ~isinf(SNRmax)
-                                    obj.coverageSimulationReport.PD(targetCellID) = obj.coverageSimulationReport.PD(targetCellID) + 1/numberOfTotalTrials;
-                                    obj.coverageSimulationReport.SNRsMean(targetCellID) = obj.coverageSimulationReport.SNRsMean(targetCellID) + SNRmax;
+                                    obj.coverageSimulationReport.globalPDrealized(targetCellID) = obj.coverageSimulationReport.globalPDrealized(targetCellID) + 1/numberOfTotalTrials;
+                                    obj.coverageSimulationReport.meanSNRsRealized(targetCellID) = obj.coverageSimulationReport.meanSNRsRealized(targetCellID) + SNRmax;
                                 end
                             end
                     end
@@ -1914,36 +1572,30 @@ classdef spu < handle
                         fprintf('trial = %d/%d\n', mcID, mc.numberOfTrials);
                     end
                 end
-                obj.coverageSimulationReport.SNRsMean(targetCellID) = 10*log10(obj.coverageSimulationReport.SNRsMean(targetCellID)./obj.coverageSimulationReport.PD(targetCellID)/numberOfTotalTrials);
+                obj.coverageSimulationReport.meanSNRsRealized(targetCellID) = 10*log10(obj.coverageSimulationReport.meanSNRsRealized(targetCellID)./obj.coverageSimulationReport.globalPDrealized(targetCellID)/numberOfTotalTrials);
                 if ~mod(targetID, 10)
                     fprintf('target = %d/%d\n', targetID, numberOfCells);
                 end
             end
-            obj.coverageSimulationReport.SNRsMean(~logical(obj.coverageSimulationReport.PD)) = -inf;
-            function cleanupFunction(obj, originalTargets, originalNumberOfTargets, previousCompressionReport)
+            obj.coverageSimulationReport.meanSNRsRealized(~logical(obj.coverageSimulationReport.globalPDrealized)) = -inf;
+            function cleanupFunction(obj, originalTargets, previousCompressionReport)
                 obj.compressionReport = previousCompressionReport;
                 obj.interfaces.targets = originalTargets;
                 obj.interfaces.settargetpositions("width", 0);
-                obj.configure("numberOfTargets", originalNumberOfTargets);
             end
         end
 
-        function visualizecoveragesimulation(obj, options)
+        function fig = visualizecoveragesimulation(obj, options)
             arguments
                 obj
                 options.saveFigures (1, 1) {mustBeNumericOrLogical, mustBeMember(options.saveFigures, [0, 1])} = false
                 options.monoStaticNetworkRXID (1, 1) {mustBePositive, mustBeInteger} = 1
                 options.contourLevelDetection (1, 1) {mustBeNonnegative, mustBeInRange(options.contourLevelDetection, 0, 1)} = 0.85
-                options.saveDirectory (1, :) {mustBeText} = ''
             end
             if isempty(obj.coverageSimulationReport.targetCellIDs)
                 fprintf('coverage simulation had not executed\n');
                 return;
             end
-            if ~isempty(options.saveDirectory) && ~isfolder(options.saveDirectory) && options.saveFigures
-                mkdir(options.saveDirectory);
-            end
-            config = obj.configuration;
             gridScan = obj.gridPointsMesh;
             dimensions = {"x", "y", "z"};
             dimensions = dimensions(size(gridScan.x) ~= 1);
@@ -1953,559 +1605,525 @@ classdef spu < handle
             x2 = obj.gridPoints{2}/1e3;
             visibleZone = reshape(~obj.blindZone, obj.gridSize([2 1 3]));
 
-            PD = reshape(obj.coverageSimulationReport.PD(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
-            SNRs = reshape(obj.coverageSimulationReport.SNRs(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
-            SNRsMean = reshape(obj.coverageSimulationReport.SNRsMean(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            globalPDmodel = reshape(obj.coverageSimulationReport.globalPDmodel(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            globalPDrealized = reshape(obj.coverageSimulationReport.globalPDrealized(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            meanSNRsModel = reshape(obj.coverageSimulationReport.meanSNRsModel(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
+            meanSNRsRealized = reshape(obj.coverageSimulationReport.meanSNRsRealized(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
 
-            fig = figure;
-            img = imagesc(x1, x2, PD);
+            fig(1) = figure;
+            img = imagesc(x1, x2, globalPDmodel);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             % set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            title('Probability of detection'); hold off;
+            % title('Modeled Probability of Detection');
+            hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "PD";
-            img.DataTipTemplate.DataTipRows(3).Value = PD;
-            savePath = fullfile(options.saveDirectory, 'PD.fig');
+            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
             hold off; drawnow;
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
 
-            fig = figure;
-            img = imagesc(x1, x2, SNRs);
+            fig(1) = figure;
+            img = imagesc(x1, x2, globalPDrealized);
+            colorbar; colormap('gray'); clim([0 1]);
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            % set(img, 'AlphaData', visibleZone);
+            delete(datatip(img, 2, 2));
+            grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            % title('Realized Probability of Detection');
+            hold off;
+            img.DataTipTemplate.DataTipRows(1).Label = "x";
+            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            img.DataTipTemplate.DataTipRows(2).Label = "y";
+            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            img.DataTipTemplate.DataTipRows(3).Value = globalPDrealized;
+            hold off; drawnow;
+
+            fig(2) = figure;
+            img = imagesc(x1, x2, meanSNRsModel);
+            colorbar; colormap('default'); clim([-inf, max(meanSNRsModel(meanSNRsModel < 300))]);
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            set(img, 'AlphaData', visibleZone);
+            delete(datatip(img, 2, 2));
+            grid off; grid on; grid minor;
+            xlabel(xLabel); ylabel(yLabel);
+            % title('Modeled SNR averaged over trials');
+            hold off;
+            img.DataTipTemplate.DataTipRows(1).Label = "x";
+            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            img.DataTipTemplate.DataTipRows(2).Label = "y";
+            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            img.DataTipTemplate.DataTipRows(3).Value = meanSNRsModel;
+            hold off; drawnow;
+
+            fig(3) = figure;
+            img = imagesc(x1, x2, meanSNRsRealized);
             colorbar; colormap('default');
             ax = gca; set(ax, 'Ydir', 'Normal');
             set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid off; grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel);
-            title('modeled SNR averaged over trials'); hold off;
+            % title('Realized SNR with straddle loss averaged over trials');
+            hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
             img.DataTipTemplate.DataTipRows(2).Label = "y";
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            img.DataTipTemplate.DataTipRows(3).Value = SNRs;
+            img.DataTipTemplate.DataTipRows(3).Value = meanSNRsRealized;
             hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'SNRmodeled.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
 
-            fig = figure;
-            img = imagesc(x1, x2, SNRsMean);
-            colorbar; colormap('default');
-            ax = gca; set(ax, 'Ydir', 'Normal');
-            set(img, 'AlphaData', visibleZone);
-            delete(datatip(img, 2, 2));
-            grid off; grid on; grid minor;
-            xlabel(xLabel); ylabel(yLabel);
-            title('realized SNR with straddle loss averaged over trials'); hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            img.DataTipTemplate.DataTipRows(3).Value = SNRsMean;
-            hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'SNRrealized.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
-
-            fig = figure; hold on;
-            plot(SNRs(:), SNRsMean(:), '.b');
-            minSNR = min(SNRs(:), SNRsMean(:));
-            maxSNR = max(SNRs(:), SNRsMean(:));
-            plot([minSNR, maxSNR], [minSNR, maxSNR]);
-            grid off; grid on; grid minor;
-            xlabel('modeled SNR_{out} (dB)'); ylabel('realized SNR_{out} (dB)');
-            title('modeled SNR vs realized SNR with straddle loss both averaged over trials');
-            hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'SNRcomparison.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
-
-            fig = figure; hold on;
-            plot(SNRs(:), PD(:), '.b');
-            plot(SNRs(:), obj.ROC(config.PFA, 10.^(.1*SNRs(:)), obj.network.numberOfActiveBistaticPairs), '.r');
-            grid off; grid on; grid minor;
-            xlabel('modeled SNR_{out} (dB)'); ylabel('p_D');
-            title('p_D vs modeled SNR averaged over trials');
-            legend('simulation', 'theoretical', 'Location', 'best');
-            hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'ROCmodeled.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
-
-            fig = figure; hold on;
-            plot(SNRsMean(:), PD(:), '.b');
-            plot(SNRsMean(:), obj.ROC(config.PFA, 10.^(.1*SNRsMean(:)), obj.network.numberOfActiveBistaticPairs), '.r');
-            grid off; grid on; grid minor;
-            xlabel('realized SNR_{out} (dB)'); ylabel('p_D');
-            title('p_D vs realized SNR averaged over trials');
-            legend('simulation', 'theoretical', 'Location', 'best');
-            hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, 'ROCrealized.fig');
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
-
-            fig = figure;
+            fig(4) = figure;
             switch obj.network.networkMode
                 case 'monoStatic'
                     edgeColor = 'k';
                 case 'multiStatic'
                     edgeColor = 'r';
             end
-            contour(x1, x2, PD, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor);
+            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor);
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            title('Probability of detection');
+            % title('Probability of detection');
             hold off; drawnow;
-            savePath = fullfile(options.saveDirectory, ['PD' num2str(options.contourLevelDetection) '.fig']);
-            if ~exist(savePath, 'file') && options.saveFigures
-                savefig(fig, savePath);
-            end
         end
 
         %%%
 
-        function pb_call(obj, varargin)
-            S = varargin{3};
-            obj.isStep = 0;
-            if obj.isWait
-                uiresume(S.f);
-                obj.isWait = 0;
-                set(S.pb, 'String', char(9208));
-            else
-                obj.isWait = 1;
-                set(S.pb, 'String', char(9205));
-            end
-        end
-
-        function sb_call(obj, varargin)
-            S = varargin{3};
-            uiresume(S.f);
-            obj.isStep = 1;
-            obj.isWait = 1;
-            set(S.pb, 'String', char(9205));
-        end
-
-        function rb_call(obj, varargin)
-            S = varargin{3};
-            uiresume(S.f);
-            obj.isRestart = 1;
-        end
-
-        function eb_call(obj, varargin)
-            S = varargin{3};
-            uiresume(S.f);
-            if obj.isSimulation
-                obj.isSimulation = 0;
-            else
-                close(S.f);
-            end
-        end
-
-        function detection = startsimulation(obj, options)
-            arguments
-                obj
-                options.duration (1, 1) double {mustBePositive} = 1
-            end
-            stepTime = obj.network.beamTime;
-            numberOfSteps = ceil(options.duration ./stepTime);
-            currentNumberOfTrials = obj.monteCarlo.numberOfTrials;
-            currentNumberOfTrialsParallel = obj.monteCarlo.numberOfTrialsParallel;
-            cleanup = onCleanup(@() recoverstate(obj, currentNumberOfTrials, currentNumberOfTrialsParallel));
-            obj.configure("numberOfTrials", 1, "numberOfTrialsParallel", 1);
-            obj.resetsimulation;
-            figID = 19234;
-            h = figure(figID);
-            if exist('h', 'var') && ishandle(h)
-                close(19234);
-            end
-            obj.isWait = 0;
-            obj.isStep = 0;
-            obj.isRestart = 0;
-            obj.isSimulation = 1;
-            S.f = figure(figID); hold on; view(0, 90);
-            set(S.f, 'WindowState', 'maximized');
-            S.pb = uicontrol( ...
-                'Style', 'pushbutton', ...
-                'Units', 'normalized', ...
-                'Position', [0.92 0.85 0.05 0.05], ...
-                'FontSize', 14);
-            S.sb = uicontrol( ...
-                'Style', 'pushbutton', ...
-                'Units', 'normalized', ...
-                'Position', [0.92 0.78 0.05 0.05], ...
-                'FontSize', 14);
-            S.rb = uicontrol( ...
-                'Style', 'pushbutton', ...
-                'Units', 'normalized', ...
-                'Position', [0.92 0.71 0.05 0.05], ...
-                'FontSize', 14);
-            S.eb = uicontrol( ...
-                'Style', 'pushbutton', ...
-                'Units', 'normalized', ...
-                'Position', [0.92 0.64 0.05 0.05], ...
-                'FontSize', 14);
-            set(S.pb, 'Callback', {@obj.pb_call, S});
-            set(S.sb, 'Callback', {@obj.sb_call, S});
-            set(S.rb, 'Callback', {@obj.rb_call, S});
-            set(S.eb, 'Callback', {@obj.eb_call, S});
-            set(S.pb, 'String', char(9208));
-            set(S.sb, 'String', char(8618));
-            set(S.rb, 'String', char(9198));
-            set(S.eb, 'String', char(10006));
-            posRX = [obj.network.activeReceivingNodes.position]/1e3;
-            posTX = [obj.network.activeTransmittingNodes.position]/1e3;
-            posRXrep = repelem(posRX, 1, obj.interfaces.numberOfTransmittingNodes);
-            posTXrep = repmat(posTX, 1, obj.interfaces.numberOfReceivingNodes);
-
-            numberOfActiveTransmittingNodes = obj.network.numberOfActiveTransmittingNodes;
-            numberOfActiveReceivingNodes = obj.network.numberOfActiveReceivingNodes;
-
-            colors = {'m', 'c'};
-            phi = linspace(-180, 180, 1000);
-            d = max(sqrt(sum(obj.network.boundary.^2)));
-            interfacesTX = interface.empty;
-            interfacesRX = interface.empty;
-            visualizationNormalizationTX = zeros(1, numberOfActiveTransmittingNodes);
-            for txID = 1 : numberOfActiveTransmittingNodes
-                targetsTemp = target( ...
-                    'position', [ ...
-                    d*cosd(phi) + posTX(1, txID)*1e3; ...
-                    d*sind(phi) + posTX(2, txID)*1e3; ...
-                    zeros(1, 1000) + posTX(3, txID)*1e3]);
-                interfacesTX(txID) = obj.network.getinterface(targetsTemp);
-                visualizationNormalizationTX(txID) = max(interfacesTX(txID).distanceTX(txID, :, :), [], 'all')/1e3;
-            end
-            visualizationNormalizationRX = zeros(1, numberOfActiveReceivingNodes);
-            for rxID = 1 : numberOfActiveReceivingNodes
-                targetsTemp = target( ...
-                    'position', [ ...
-                    d*cosd(phi) + posRX(1, rxID)*1e3; ...
-                    d*sind(phi) + posRX(2, rxID)*1e3; ...
-                    zeros(1, 1000) + posRX(3, rxID)*1e3]);
-                interfacesRX(rxID) = obj.network.getinterface(targetsTemp);
-                visualizationNormalizationRX(rxID) = max(interfacesRX(rxID).distanceRX(:, rxID, :), [], 'all')/1e3;
-            end
-
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 5);
-            plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 5);
-            line([posRXrep(1, :); posTXrep(1, :)], [posRXrep(2, :); posTXrep(2, :)], [posRXrep(3, :); posTXrep(3, :)], 'lineStyle', '--', 'Color', 'k');
-
-            ax = gca;
-            lines = ax.Children;
-
-            grid off; grid on; grid minor; title('scenario');
-            xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
-            xlim(obj.network.boundaryListened(1, :)/1e3);
-            ylim(obj.network.boundaryListened(2, :)/1e3);
-            zlim(obj.network.boundaryListened(3, :)/1e3);
-
-            switch obj.network.networkMode
-                case "multiStatic"
-                    detection = struct( ...
-                        'power', [], ...
-                        'x', [], ...
-                        'y', [], ...
-                        'z', [], ...
-                        'numberOfDetections', [], ...
-                        'position', []);
-                    detection = repmat(detection, 1, numberOfSteps);
-                case "monoStatic"
-                    detection = struct( ...
-                        'power', [], ...
-                        'range', [], ...
-                        'elevation', [], ...
-                        'azimuth', [], ...
-                        'numberOfDetections', [], ...
-                        'position', []);
-                    detection = repmat({repmat(detection, 1, numberOfSteps)}, obj.network.numberOfActiveReceivingNodes, 1);
-            end
-            numberOfLinesInitial = length(ax.Children);
-            stepID = 0;
-            start = true;
-            while obj.isSimulation
-                if stepID == numberOfSteps
-                    set(S.pb, 'String', char(9205));
-                    uiwait(S.f);
-                end
-                if obj.isRestart && stepID
-                    obj.isRestart = 0;
-                    obj.resetsimulation;
-                    stepID = 0;
-                    if ~obj.isStep
-                        obj.isWait = 0;
-                        set(S.pb, 'String', char(9208));
-                    end
-                    continue
-                end
-                if stepID == numberOfSteps
-                    continue
-                end
-                figure(figID);
-                lineID = numberOfLinesInitial + 1;
-                if ~start
-                    if ~isempty(obj.interfaces.targets)
-                        obj.interfaces.targets.step(stepTime);
-                    end
-                    for rxID = 1 : numberOfActiveReceivingNodes
-                        obj.network.activeReceivingNodes(rxID).array.step(stepTime);
-                    end
-                    for txID = 1 : numberOfActiveTransmittingNodes
-                        obj.network.transmittingNodes(txID).array.step(stepTime);
-                    end
-                end
-                obj.setmatchfilteredsignals;
-                switch obj.network.networkMode
-                    case "multiStatic"
-                        detections = obj.detectionFromIntegration;
-                    case "monoStatic"
-                        detections = obj.detectionFromMatchFiltration;
-                end
-                if ~start && sum([detections.numberOfDetections]) == 0
-                    continue;
-                end
-                if (obj.isWait || obj.isStep) && stepID
-                    uiwait(S.f);
-                    if obj.isRestart
-                        obj.isRestart = 0;
-                        obj.resetsimulation;
-                        stepID = 0;
-                        continue
-                    end
-                end
-
-                if ~isempty(obj.interfaces.targets)
-                    x = obj.interfaces.targets.position(1, :)/1e3;
-                    y = obj.interfaces.targets.position(2, :)/1e3;
-                    z = obj.interfaces.targets.position(3, :)/1e3;
-    
-                    if start
-                        if obj.interfaces.numberOfTargets < 11
-                            plot3(x, y, z, '+k', 'LineWidth', 2, 'MarkerSize', 10);
-                        elseif obj.interfaces.numberOfTargets < 21
-                            plot3(x, y, z, '*k', 'LineWidth', 1, 'MarkerSize', 10);
-                        else
-                            plot3(x, y, z, '.k');
-                        end
-                    else
-                        lines(lineID).XData = x;
-                        lines(lineID).YData = y;
-                        lines(lineID).ZData = z;
-                        lineID = lineID + 1;
-                    end
-                end
-
-                switch obj.network.networkMode
-                    case "monoStatic"
-                        for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                            detection{rxID}(stepID + 1) = detections(rxID);
-                            pos = detection{rxID}(stepID + 1).position;
-                            if isempty(pos)
-                                if start
-                                    % dummy to create line
-                                    if obj.network.numberOfActiveReceivingNodes == 2
-                                        plot3(nan, nan, nan, ['.', colors{rxID}], 'LineWidth', 1, 'MarkerSize', 10);
-                                    else
-                                        plot3(nan, nan, nan, '.c', 'LineWidth', 1, 'MarkerSize', 10);
-                                    end
-                                    continue;
-                                else
-                                    lines(lineID).XData = [];
-                                    lines(lineID).YData = [];
-                                    lines(lineID).ZData = [];
-                                    lineID = lineID + 1;
-                                    continue
-                                end
-                            end
-                            xEstimation = pos(1, :)/1e3;
-                            yEstimation = pos(2, :)/1e3;
-                            zEstimation = pos(3, :)/1e3;
-                            if start
-                                if obj.network.numberOfActiveReceivingNodes == 2
-                                    plot3(xEstimation, yEstimation, zEstimation, ['.', colors{rxID}], 'LineWidth', 1, 'MarkerSize', 10);
-                                else
-                                    plot3(xEstimation, yEstimation, zEstimation, '.c', 'LineWidth', 1, 'MarkerSize', 10);
-                                end
-                            else
-                                lines(lineID).XData = xEstimation;
-                                lines(lineID).YData = yEstimation;
-                                lines(lineID).ZData = zEstimation;
-                                lineID = lineID + 1;
-                            end
-                        end
-                    case "multiStatic"
-                        detection(stepID + 1) = detections;
-                        pos = detection(stepID + 1).position;
-                        if isempty(pos)
-                            if start
-                                % dummy to create line
-                                plot3(nan, nan, nan, '.r', 'LineWidth', 1, 'MarkerSize', 10);
-                                continue;
-                            else
-                                lines(lineID).XData = [];
-                                lines(lineID).YData = [];
-                                lines(lineID).ZData = [];
-                                continue
-                            end
-                        end
-                        xEstimation = pos(1, :)/1e3;
-                        yEstimation = pos(2, :)/1e3;
-                        zEstimation = pos(3, :)/1e3;
-                        if start
-                            plot3(xEstimation, yEstimation, zEstimation, '.r', 'LineWidth', 1, 'MarkerSize', 10);
-                        else
-                            lines(lineID).XData = xEstimation;
-                            lines(lineID).YData = yEstimation;
-                            lines(lineID).ZData = zEstimation;
-                        end
-                end
-
-                if (~strcmpi(obj.network.surveillanceMode, "staticBeam") && ~start) || start
-                    for txID = 1 : numberOfActiveTransmittingNodes
-                        G = visualizationNormalizationTX(txID).*permute(abs(interfacesTX(txID).transmittedBeam(txID, :, :).^2./interfacesTX(txID).network.activeTransmittingNodes(txID).array.numberOfTotalElements), [1 3 2]);
-                        u = permute(interfacesTX(txID).unitDirectionTX, [1 3 2]);
-                        if start
-                            plot3(G.*u(1, :, txID) + posTX(1, txID), G.*u(2, :, txID) + posTX(2, txID), u(3, :, txID) + posTX(3, txID), 'r');
-                        else
-                            lines(lineID).XData = G.*u(1, :, txID) + posTX(1, txID);
-                            lines(lineID).YData = G.*u(2, :, txID) + posTX(2, txID);
-                            lines(lineID).ZData = u(3, :, txID) + posTX(3, txID);
-                            lineID = lineID + 1;
-                        end
-                    end
-                    for rxID = 1 : numberOfActiveReceivingNodes
-                        switch obj.network.networkMode
-                            case "monoStatic"
-                                txID = obj.network.monoStaticTransmitterIDs(rxID);
-                                if isnan(txID)
-                                    break;
-                                end
-                            case "multiStatic"
-                                txID = 1;
-                        end
-                        G = visualizationNormalizationRX(rxID).*permute(abs(interfacesRX(rxID).receivedBeamSpaceObservations{rxID}(txID, :, :, :).^2./interfacesRX(rxID).network.activeReceivingNodes(rxID).array.numberOfTotalElements), [3 4 1 2]);
-                        u = permute(interfacesRX(rxID).unitDirectionRX, [3 1 2]);
-                        if start
-                            if obj.network.numberOfActiveReceivingNodes == 2
-                                plot3(G.*u(:, 1, rxID) + posRX(1, rxID), G.*u(:, 2, rxID) + posRX(2, rxID), u(:, 3, rxID) + posRX(3, rxID), colors{rxID}, 'LineWidth', 2);
-                            else
-                                plot3(G.*u(:, 1, rxID) + posRX(1, rxID), G.*u(:, 2, rxID) + posRX(2, rxID), u(:, 3, rxID) + posRX(3, rxID), 'b', 'LineWidth', 2);
-                            end
-                        else
-                            numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
-                            for chID = 1 : numberOfTotalChannels
-                                lines(lineID).XData = G(:, chID).*u(:, 1, rxID) + posRX(1, rxID);
-                                lines(lineID).YData = G(:, chID).*u(:, 2, rxID) + posRX(2, rxID);
-                                lines(lineID).ZData = u(:, 3, rxID) + posRX(3, rxID);
-                                lineID = lineID + 1;
-                            end
-                        end
-                    end
-                    for txID = 1 : numberOfActiveTransmittingNodes
-                        n = visualizationNormalizationTX(txID).*obj.network.activeTransmittingNodes(txID).array.normalVector/2;
-                        if start
-                            quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), n(1), n(2), n(3), 'Color', 'k');
-                        else
-                            lines(lineID).XData = posTX(1, txID);
-                            lines(lineID).YData = posTX(2, txID);
-                            lines(lineID).ZData = posTX(3, txID);
-                            lines(lineID).UData = n(1);
-                            lines(lineID).VData = n(2);
-                            lines(lineID).WData = n(3);
-                            lineID = lineID + 1;
-                        end
-                    end
-                    for rxID = 1 : numberOfActiveReceivingNodes
-                        n = visualizationNormalizationRX(rxID).*obj.network.activeReceivingNodes(rxID).array.normalVector/2;
-                        if start
-                            quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'Color', 'k');
-                        else
-                            lines(lineID).XData = posRX(1, rxID);
-                            lines(lineID).YData = posRX(2, rxID);
-                            lines(lineID).ZData = posRX(3, rxID);
-                            lines(lineID).UData = n(1);
-                            lines(lineID).VData = n(2);
-                            lines(lineID).WData = n(3);
-                            lineID = lineID + 1;
-                        end
-                    end
-                end
-                % for txID = 1 : numberOfActiveTransmittingNodes
-                %     s = 1.5*visualizationNormalizationTX(txID).*obj.network.activeTransmittingNodes(txID).array.steeringUnitDirection;
-                %     if start
-                %         quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), s(1), s(2), s(3), 'Color', 'r', 'LineStyle', '--', 'LineWidth', 2);
-                %     else
-                %         lines(lineID).XData = posTX(1, txID);
-                %         lines(lineID).YData = posTX(2, txID);
-                %         lines(lineID).ZData = posTX(3, txID);
-                %         lines(lineID).UData = s(1);
-                %         lines(lineID).VData = s(2);
-                %         lines(lineID).WData = s(3);
-                %         lineID = lineID + 1;
-                %     end
-                % end
-                % for rxID = 1 : numberOfActiveReceivingNodes
-                %     s = 1.5*visualizationNormalizationRX(rxID).*obj.network.activeReceivingNodes(rxID).array.steeringUnitDirection;
-                %     if start
-                %         if obj.network.numberOfActiveReceivingNodes == 2
-                %             quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), s(1), s(2), s(3), 'Color', colors{rxID}, 'LineStyle', '--', 'LineWidth', 2);
-                %         else
-                %             quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), s(1), s(2), s(3), 'Color', 'b', 'LineStyle', '--', 'LineWidth', 2);
-                %         end
-                %     else
-                %         lines(lineID).XData = posRX(1, rxID);
-                %         lines(lineID).YData = posRX(2, rxID);
-                %         lines(lineID).ZData = posRX(3, rxID);
-                %         lines(lineID).UData = s(1);
-                %         lines(lineID).VData = s(2);
-                %         lines(lineID).WData = s(3);
-                %         lineID = lineID + 1;
-                %     end
-                % end
-                
-                if start
-                    lines = flipud(ax.Children);
-                    start = false;
-                end
-                if stepID < numberOfSteps
-                    stepID = stepID + 1;
-                end
-                drawnow;
-            end
-            function recoverstate(obj, currentNumberOfTrials, currentNumberOfTrialsParallel)
-                obj.configure( ...
-                    "numberOfTrials", currentNumberOfTrials, ...
-                    "numberOfTrialsParallel", currentNumberOfTrialsParallel);
-                obj.resetsimulation;
-            end
-        end
-
-        function resetsimulation(obj)
-            if ~isempty(obj.interfaces.targets)
-                obj.interfaces.targets.reset;
-            end
-            for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                obj.network.activeReceivingNodes(rxID).array.reset;
-            end
-            for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                obj.network.transmittingNodes(txID).array.reset;
-            end
-        end
+        % function pb_call(obj, varargin)
+        %     S = varargin{3};
+        %     obj.isStep = 0;
+        %     if obj.isWait
+        %         uiresume(S.f);
+        %         obj.isWait = 0;
+        %         set(S.pb, 'String', char(9208));
+        %     else
+        %         obj.isWait = 1;
+        %         set(S.pb, 'String', char(9205));
+        %     end
+        % end
+        % 
+        % function sb_call(obj, varargin)
+        %     S = varargin{3};
+        %     uiresume(S.f);
+        %     obj.isStep = 1;
+        %     obj.isWait = 1;
+        %     set(S.pb, 'String', char(9205));
+        % end
+        % 
+        % function rb_call(obj, varargin)
+        %     S = varargin{3};
+        %     uiresume(S.f);
+        %     obj.isRestart = 1;
+        % end
+        % 
+        % function eb_call(obj, varargin)
+        %     S = varargin{3};
+        %     uiresume(S.f);
+        %     if obj.isSimulation
+        %         obj.isSimulation = 0;
+        %     else
+        %         close(S.f);
+        %     end
+        % end
+        % 
+        % function detection = startsimulation(obj, options)
+        %     arguments
+        %         obj
+        %         options.duration (1, 1) double {mustBePositive} = 1
+        %     end
+        %     stepTime = obj.network.beamTime;
+        %     numberOfSteps = ceil(options.duration ./stepTime);
+        %     currentNumberOfTrials = obj.monteCarlo.numberOfTrials;
+        %     currentNumberOfTrialsParallel = obj.monteCarlo.numberOfTrialsParallel;
+        %     cleanup = onCleanup(@() recoverstate(obj, currentNumberOfTrials, currentNumberOfTrialsParallel));
+        %     obj.configure("numberOfTrials", 1, "numberOfTrialsParallel", 1);
+        %     obj.resetsimulation;
+        %     figID = 19234;
+        %     h = figure(figID);
+        %     if exist('h', 'var') && ishandle(h)
+        %         close(19234);
+        %     end
+        %     obj.isWait = 0;
+        %     obj.isStep = 0;
+        %     obj.isRestart = 0;
+        %     obj.isSimulation = 1;
+        %     S.f = figure(figID); hold on; view(0, 90);
+        %     set(S.f, 'WindowState', 'maximized');
+        %     S.pb = uicontrol( ...
+        %         'Style', 'pushbutton', ...
+        %         'Units', 'normalized', ...
+        %         'Position', [0.92 0.85 0.05 0.05], ...
+        %         'FontSize', 14);
+        %     S.sb = uicontrol( ...
+        %         'Style', 'pushbutton', ...
+        %         'Units', 'normalized', ...
+        %         'Position', [0.92 0.78 0.05 0.05], ...
+        %         'FontSize', 14);
+        %     S.rb = uicontrol( ...
+        %         'Style', 'pushbutton', ...
+        %         'Units', 'normalized', ...
+        %         'Position', [0.92 0.71 0.05 0.05], ...
+        %         'FontSize', 14);
+        %     S.eb = uicontrol( ...
+        %         'Style', 'pushbutton', ...
+        %         'Units', 'normalized', ...
+        %         'Position', [0.92 0.64 0.05 0.05], ...
+        %         'FontSize', 14);
+        %     set(S.pb, 'Callback', {@obj.pb_call, S});
+        %     set(S.sb, 'Callback', {@obj.sb_call, S});
+        %     set(S.rb, 'Callback', {@obj.rb_call, S});
+        %     set(S.eb, 'Callback', {@obj.eb_call, S});
+        %     set(S.pb, 'String', char(9208));
+        %     set(S.sb, 'String', char(8618));
+        %     set(S.rb, 'String', char(9198));
+        %     set(S.eb, 'String', char(10006));
+        %     posRX = [obj.network.activeReceivingNodes.position]/1e3;
+        %     posTX = [obj.network.activeTransmittingNodes.position]/1e3;
+        %     posRXrep = repelem(posRX, 1, obj.interfaces.numberOfTransmittingNodes);
+        %     posTXrep = repmat(posTX, 1, obj.interfaces.numberOfReceivingNodes);
+        % 
+        %     numberOfActiveTransmittingNodes = obj.network.numberOfActiveTransmittingNodes;
+        %     numberOfActiveReceivingNodes = obj.network.numberOfActiveReceivingNodes;
+        % 
+        %     colors = {'m', 'c'};
+        %     phi = linspace(-180, 180, 1000);
+        %     d = max(sqrt(sum(obj.network.boundary.^2)));
+        %     interfacesTX = interface.empty;
+        %     interfacesRX = interface.empty;
+        %     visualizationNormalizationTX = zeros(1, numberOfActiveTransmittingNodes);
+        %     for txID = 1 : numberOfActiveTransmittingNodes
+        %         targetsTemp = target( ...
+        %             'position', [ ...
+        %             d*cosd(phi) + posTX(1, txID)*1e3; ...
+        %             d*sind(phi) + posTX(2, txID)*1e3; ...
+        %             zeros(1, 1000) + posTX(3, txID)*1e3]);
+        %         interfacesTX(txID) = obj.network.getinterface(targetsTemp);
+        %         visualizationNormalizationTX(txID) = max(interfacesTX(txID).distanceTX(txID, :, :), [], 'all')/1e3;
+        %     end
+        %     visualizationNormalizationRX = zeros(1, numberOfActiveReceivingNodes);
+        %     for rxID = 1 : numberOfActiveReceivingNodes
+        %         targetsTemp = target( ...
+        %             'position', [ ...
+        %             d*cosd(phi) + posRX(1, rxID)*1e3; ...
+        %             d*sind(phi) + posRX(2, rxID)*1e3; ...
+        %             zeros(1, 1000) + posRX(3, rxID)*1e3]);
+        %         interfacesRX(rxID) = obj.network.getinterface(targetsTemp);
+        %         visualizationNormalizationRX(rxID) = max(interfacesRX(rxID).distanceRX(:, rxID, :), [], 'all')/1e3;
+        %     end
+        % 
+        %     plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 5);
+        %     plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 5);
+        %     line([posRXrep(1, :); posTXrep(1, :)], [posRXrep(2, :); posTXrep(2, :)], [posRXrep(3, :); posTXrep(3, :)], 'lineStyle', '--', 'Color', 'k');
+        % 
+        %     ax = gca;
+        %     lines = ax.Children;
+        % 
+        %     grid off; grid on; grid minor; title('scenario');
+        %     xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
+        %     xlim(obj.network.boundaryListened(1, :)/1e3);
+        %     ylim(obj.network.boundaryListened(2, :)/1e3);
+        %     zlim(obj.network.boundaryListened(3, :)/1e3);
+        % 
+        %     switch obj.network.networkMode
+        %         case "multiStatic"
+        %             detection = struct( ...
+        %                 'power', [], ...
+        %                 'x', [], ...
+        %                 'y', [], ...
+        %                 'z', [], ...
+        %                 'numberOfDetections', [], ...
+        %                 'position', []);
+        %             detection = repmat(detection, 1, numberOfSteps);
+        %         case "monoStatic"
+        %             detection = struct( ...
+        %                 'power', [], ...
+        %                 'range', [], ...
+        %                 'elevation', [], ...
+        %                 'azimuth', [], ...
+        %                 'numberOfDetections', [], ...
+        %                 'position', []);
+        %             detection = repmat({repmat(detection, 1, numberOfSteps)}, obj.network.numberOfActiveReceivingNodes, 1);
+        %     end
+        %     numberOfLinesInitial = length(ax.Children);
+        %     stepID = 0;
+        %     start = true;
+        %     while obj.isSimulation
+        %         if stepID == numberOfSteps
+        %             set(S.pb, 'String', char(9205));
+        %             uiwait(S.f);
+        %         end
+        %         if obj.isRestart && stepID
+        %             obj.isRestart = 0;
+        %             obj.resetsimulation;
+        %             stepID = 0;
+        %             if ~obj.isStep
+        %                 obj.isWait = 0;
+        %                 set(S.pb, 'String', char(9208));
+        %             end
+        %             continue
+        %         end
+        %         if stepID == numberOfSteps
+        %             continue
+        %         end
+        %         figure(figID);
+        %         lineID = numberOfLinesInitial + 1;
+        %         if ~start
+        %             if ~isempty(obj.interfaces.targets)
+        %                 obj.interfaces.targets.step(stepTime);
+        %             end
+        %             for rxID = 1 : numberOfActiveReceivingNodes
+        %                 obj.network.activeReceivingNodes(rxID).array.step(stepTime);
+        %             end
+        %             for txID = 1 : numberOfActiveTransmittingNodes
+        %                 obj.network.transmittingNodes(txID).array.step(stepTime);
+        %             end
+        %         end
+        %         obj.setmatchfilteredsignals;
+        %         switch obj.network.networkMode
+        %             case "multiStatic"
+        %                 detections = obj.detectionFromIntegration;
+        %             case "monoStatic"
+        %                 detections = obj.detectionFromMatchFiltration;
+        %         end
+        %         if ~start && sum([detections.numberOfDetections]) == 0
+        %             continue;
+        %         end
+        %         if (obj.isWait || obj.isStep) && stepID
+        %             uiwait(S.f);
+        %             if obj.isRestart
+        %                 obj.isRestart = 0;
+        %                 obj.resetsimulation;
+        %                 stepID = 0;
+        %                 continue
+        %             end
+        %         end
+        % 
+        %         if ~isempty(obj.interfaces.targets)
+        %             x = obj.interfaces.targets.position(1, :)/1e3;
+        %             y = obj.interfaces.targets.position(2, :)/1e3;
+        %             z = obj.interfaces.targets.position(3, :)/1e3;
+        % 
+        %             if start
+        %                 if obj.interfaces.numberOfTargets < 11
+        %                     plot3(x, y, z, '+k', 'LineWidth', 2, 'MarkerSize', 10);
+        %                 elseif obj.interfaces.numberOfTargets < 21
+        %                     plot3(x, y, z, '*k', 'LineWidth', 1, 'MarkerSize', 10);
+        %                 else
+        %                     plot3(x, y, z, '.k');
+        %                 end
+        %             else
+        %                 lines(lineID).XData = x;
+        %                 lines(lineID).YData = y;
+        %                 lines(lineID).ZData = z;
+        %                 lineID = lineID + 1;
+        %             end
+        %         end
+        % 
+        %         switch obj.network.networkMode
+        %             case "monoStatic"
+        %                 for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+        %                     detection{rxID}(stepID + 1) = detections(rxID);
+        %                     pos = detection{rxID}(stepID + 1).position;
+        %                     if isempty(pos)
+        %                         if start
+        %                             % dummy to create line
+        %                             if obj.network.numberOfActiveReceivingNodes == 2
+        %                                 plot3(nan, nan, nan, ['.', colors{rxID}], 'LineWidth', 1, 'MarkerSize', 10);
+        %                             else
+        %                                 plot3(nan, nan, nan, '.c', 'LineWidth', 1, 'MarkerSize', 10);
+        %                             end
+        %                             continue;
+        %                         else
+        %                             lines(lineID).XData = [];
+        %                             lines(lineID).YData = [];
+        %                             lines(lineID).ZData = [];
+        %                             lineID = lineID + 1;
+        %                             continue
+        %                         end
+        %                     end
+        %                     xEstimation = pos(1, :)/1e3;
+        %                     yEstimation = pos(2, :)/1e3;
+        %                     zEstimation = pos(3, :)/1e3;
+        %                     if start
+        %                         if obj.network.numberOfActiveReceivingNodes == 2
+        %                             plot3(xEstimation, yEstimation, zEstimation, ['.', colors{rxID}], 'LineWidth', 1, 'MarkerSize', 10);
+        %                         else
+        %                             plot3(xEstimation, yEstimation, zEstimation, '.c', 'LineWidth', 1, 'MarkerSize', 10);
+        %                         end
+        %                     else
+        %                         lines(lineID).XData = xEstimation;
+        %                         lines(lineID).YData = yEstimation;
+        %                         lines(lineID).ZData = zEstimation;
+        %                         lineID = lineID + 1;
+        %                     end
+        %                 end
+        %             case "multiStatic"
+        %                 detection(stepID + 1) = detections;
+        %                 pos = detection(stepID + 1).position;
+        %                 if isempty(pos)
+        %                     if start
+        %                         % dummy to create line
+        %                         plot3(nan, nan, nan, '.r', 'LineWidth', 1, 'MarkerSize', 10);
+        %                         continue;
+        %                     else
+        %                         lines(lineID).XData = [];
+        %                         lines(lineID).YData = [];
+        %                         lines(lineID).ZData = [];
+        %                         continue
+        %                     end
+        %                 end
+        %                 xEstimation = pos(1, :)/1e3;
+        %                 yEstimation = pos(2, :)/1e3;
+        %                 zEstimation = pos(3, :)/1e3;
+        %                 if start
+        %                     plot3(xEstimation, yEstimation, zEstimation, '.r', 'LineWidth', 1, 'MarkerSize', 10);
+        %                 else
+        %                     lines(lineID).XData = xEstimation;
+        %                     lines(lineID).YData = yEstimation;
+        %                     lines(lineID).ZData = zEstimation;
+        %                 end
+        %         end
+        % 
+        %         if (~strcmpi(obj.network.surveillanceMode, "staticBeam") && ~start) || start
+        %             for txID = 1 : numberOfActiveTransmittingNodes
+        %                 G = visualizationNormalizationTX(txID).*permute(abs(interfacesTX(txID).transmittedBeam(txID, :, :).^2./interfacesTX(txID).network.activeTransmittingNodes(txID).array.numberOfTotalElements), [1 3 2]);
+        %                 u = permute(interfacesTX(txID).unitDirectionTX, [1 3 2]);
+        %                 if start
+        %                     plot3(G.*u(1, :, txID) + posTX(1, txID), G.*u(2, :, txID) + posTX(2, txID), u(3, :, txID) + posTX(3, txID), 'r');
+        %                 else
+        %                     lines(lineID).XData = G.*u(1, :, txID) + posTX(1, txID);
+        %                     lines(lineID).YData = G.*u(2, :, txID) + posTX(2, txID);
+        %                     lines(lineID).ZData = u(3, :, txID) + posTX(3, txID);
+        %                     lineID = lineID + 1;
+        %                 end
+        %             end
+        %             for rxID = 1 : numberOfActiveReceivingNodes
+        %                 switch obj.network.networkMode
+        %                     case "monoStatic"
+        %                         txID = obj.network.monoStaticTransmitterIDs(rxID);
+        %                         if isnan(txID)
+        %                             break;
+        %                         end
+        %                     case "multiStatic"
+        %                         txID = 1;
+        %                 end
+        %                 G = visualizationNormalizationRX(rxID).*permute(abs(interfacesRX(rxID).receivedBeamSpaceObservations{rxID}(txID, :, :, :).^2./interfacesRX(rxID).network.activeReceivingNodes(rxID).array.numberOfTotalElements), [3 4 1 2]);
+        %                 u = permute(interfacesRX(rxID).unitDirectionRX, [3 1 2]);
+        %                 if start
+        %                     if obj.network.numberOfActiveReceivingNodes == 2
+        %                         plot3(G.*u(:, 1, rxID) + posRX(1, rxID), G.*u(:, 2, rxID) + posRX(2, rxID), u(:, 3, rxID) + posRX(3, rxID), colors{rxID}, 'LineWidth', 2);
+        %                     else
+        %                         plot3(G.*u(:, 1, rxID) + posRX(1, rxID), G.*u(:, 2, rxID) + posRX(2, rxID), u(:, 3, rxID) + posRX(3, rxID), 'b', 'LineWidth', 2);
+        %                     end
+        %                 else
+        %                     numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
+        %                     for chID = 1 : numberOfTotalChannels
+        %                         lines(lineID).XData = G(:, chID).*u(:, 1, rxID) + posRX(1, rxID);
+        %                         lines(lineID).YData = G(:, chID).*u(:, 2, rxID) + posRX(2, rxID);
+        %                         lines(lineID).ZData = u(:, 3, rxID) + posRX(3, rxID);
+        %                         lineID = lineID + 1;
+        %                     end
+        %                 end
+        %             end
+        %             for txID = 1 : numberOfActiveTransmittingNodes
+        %                 n = visualizationNormalizationTX(txID).*obj.network.activeTransmittingNodes(txID).array.normalVector/2;
+        %                 if start
+        %                     quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), n(1), n(2), n(3), 'Color', 'k');
+        %                 else
+        %                     lines(lineID).XData = posTX(1, txID);
+        %                     lines(lineID).YData = posTX(2, txID);
+        %                     lines(lineID).ZData = posTX(3, txID);
+        %                     lines(lineID).UData = n(1);
+        %                     lines(lineID).VData = n(2);
+        %                     lines(lineID).WData = n(3);
+        %                     lineID = lineID + 1;
+        %                 end
+        %             end
+        %             for rxID = 1 : numberOfActiveReceivingNodes
+        %                 n = visualizationNormalizationRX(rxID).*obj.network.activeReceivingNodes(rxID).array.normalVector/2;
+        %                 if start
+        %                     quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'Color', 'k');
+        %                 else
+        %                     lines(lineID).XData = posRX(1, rxID);
+        %                     lines(lineID).YData = posRX(2, rxID);
+        %                     lines(lineID).ZData = posRX(3, rxID);
+        %                     lines(lineID).UData = n(1);
+        %                     lines(lineID).VData = n(2);
+        %                     lines(lineID).WData = n(3);
+        %                     lineID = lineID + 1;
+        %                 end
+        %             end
+        %         end
+        %         % for txID = 1 : numberOfActiveTransmittingNodes
+        %         %     s = 1.5*visualizationNormalizationTX(txID).*obj.network.activeTransmittingNodes(txID).array.steeringUnitDirection;
+        %         %     if start
+        %         %         quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), s(1), s(2), s(3), 'Color', 'r', 'LineStyle', '--', 'LineWidth', 2);
+        %         %     else
+        %         %         lines(lineID).XData = posTX(1, txID);
+        %         %         lines(lineID).YData = posTX(2, txID);
+        %         %         lines(lineID).ZData = posTX(3, txID);
+        %         %         lines(lineID).UData = s(1);
+        %         %         lines(lineID).VData = s(2);
+        %         %         lines(lineID).WData = s(3);
+        %         %         lineID = lineID + 1;
+        %         %     end
+        %         % end
+        %         % for rxID = 1 : numberOfActiveReceivingNodes
+        %         %     s = 1.5*visualizationNormalizationRX(rxID).*obj.network.activeReceivingNodes(rxID).array.steeringUnitDirection;
+        %         %     if start
+        %         %         if obj.network.numberOfActiveReceivingNodes == 2
+        %         %             quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), s(1), s(2), s(3), 'Color', colors{rxID}, 'LineStyle', '--', 'LineWidth', 2);
+        %         %         else
+        %         %             quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), s(1), s(2), s(3), 'Color', 'b', 'LineStyle', '--', 'LineWidth', 2);
+        %         %         end
+        %         %     else
+        %         %         lines(lineID).XData = posRX(1, rxID);
+        %         %         lines(lineID).YData = posRX(2, rxID);
+        %         %         lines(lineID).ZData = posRX(3, rxID);
+        %         %         lines(lineID).UData = s(1);
+        %         %         lines(lineID).VData = s(2);
+        %         %         lines(lineID).WData = s(3);
+        %         %         lineID = lineID + 1;
+        %         %     end
+        %         % end
+        % 
+        %         if start
+        %             lines = flipud(ax.Children);
+        %             start = false;
+        %         end
+        %         if stepID < numberOfSteps
+        %             stepID = stepID + 1;
+        %         end
+        %         drawnow;
+        %     end
+        %     function recoverstate(obj, currentNumberOfTrials, currentNumberOfTrialsParallel)
+        %         obj.configure( ...
+        %             "numberOfTrials", currentNumberOfTrials, ...
+        %             "numberOfTrialsParallel", currentNumberOfTrialsParallel);
+        %         obj.resetsimulation;
+        %     end
+        % end
+        % 
+        % function resetsimulation(obj)
+        %     if ~isempty(obj.interfaces.targets)
+        %         obj.interfaces.targets.reset;
+        %     end
+        %     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
+        %         obj.network.activeReceivingNodes(rxID).array.reset;
+        %     end
+        %     for txID = 1 : obj.network.numberOfActiveTransmittingNodes
+        %         obj.network.transmittingNodes(txID).array.reset;
+        %     end
+        % end
         
         %%% visualization methods
 
@@ -2550,7 +2168,7 @@ classdef spu < handle
                         plot(t, 20*log10(abs(s(:, :, txID))));
                     end
                     hold on;
-                    if strcmpi(obj.network.networkMode, "monoStatic") && obj.processingAlgorithm == 2 && obj.configurationMonostatic.CFAR
+                    if strcmpi(obj.network.networkMode, "monoStatic") && obj.configurationMonostatic.CFAR
                         T = obj.thresholdCFAR{rxID}(:, :, options.trialID);
                         if ~isscalar(options.receivingNodeIDs)
                             plot(t, 10*log10(T(:, ceil(end/2))), 'LineStyle', '--', 'LineWidth', 2);
@@ -2560,15 +2178,13 @@ classdef spu < handle
                     end
                 end
             end
-            if strcmpi(obj.network.networkMode, "monoStatic")
-                if obj.processingAlgorithm ~= 2 || ~obj.configurationMonostatic.CFAR
-                    yline(config.threshold_dB, 'LineStyle', '--', 'LineWidth', 2);
-                end
+            if strcmpi(obj.network.networkMode, "monoStatic") && ~obj.configurationMonostatic.CFAR
+                yline(10*log10(config.detector.localThreshold), 'LineStyle', '--', 'LineWidth', 2);
             end
             grid off; grid on; grid minor;
             xlabel('time (\mus)'); ylabel('power (dB)');
             title('filtered signal');
-            if ~isscalar(options.receivingNodeIDs) && ~(strcmpi(obj.network.networkMode, "monoStatic") && obj.processingAlgorithm == 2 && obj.configurationMonostatic.CFAR)
+            if ~isscalar(options.receivingNodeIDs) && ~(strcmpi(obj.network.networkMode, "monoStatic") && obj.configurationMonostatic.CFAR)
                 leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
                 title(leg, 'RX ID');
             end
@@ -2794,18 +2410,19 @@ classdef spu < handle
                 end
             else
                 processedSignalType = 'integrated';
-                if any(strcmpi(obj.detectionAlgorithm, ["OMP", "OMPjoint", "CoSaMP"]))
+                if any(strcmpi(obj.detectionAlgorithm, ["OMP", "OMPjoint"]))
                     obj.detectionAlgorithm = "peak";
                 end
-                if isempty(obj.signalsIntegrated)
+                Z = obj.signalsIntegrated;
+                if isempty(Z)
                     fprintf('"signalsIntegrated" is empty\n');
                     return;
                 end
                 switch obj.network.networkMode
                     case "multiStatic"
-                        z = obj.signalsIntegrated(:, :, options.trialID);
+                        z = Z(:, :, options.trialID);
                     case "monoStatic"
-                        z = obj.signalsIntegrated{options.monoStaticNetworkRXID}(:, options.monoStaticNetworkCHID, options.trialID);
+                        z = Z{options.monoStaticNetworkRXID}(:, options.monoStaticNetworkCHID, options.trialID);
                 end
             end
             switch obj.network.networkMode
@@ -2881,7 +2498,7 @@ classdef spu < handle
                                 x = obj.interfaces.targets.position(dims, :)/1e3;
                                 plot3(x(1, :), x(2, :), repmat(maxY, [1, size(x, 2)]), '+k', 'LineWidth', 2);
                             end
-                            plot3(x2(:), x1(:), config.threshold_dB(options.monoStaticNetworkRXID)*ones(1, numel(x2)), 'k');
+                            plot3(x2(:), x1(:), 10*log10(config.detector.globalThreshold(options.monoStaticNetworkRXID)*ones(1, numel(x2))), 'k');
                             m = mesh(x2, x1, Y);
                             set(m, 'AlphaData', ~isinf(Y) & ~isnan(Y));
                             m.FaceColor = 'flat';
@@ -2909,15 +2526,19 @@ classdef spu < handle
                     xlim(obj.network.boundaryListened(1, :)/1e3); ylim(obj.network.boundaryListened(2, :)/1e3);
                     grid on; grid minor; view(0, 90);
                     xlabel(xLabel); ylabel(yLabel); zlabel(zLabel);
-                    switch obj.network.networkMode
-                        case "multiStatic"
-                            SNR = max(obj.outputSNR_dB, [], [3 4]);
-                            PD = max(config.PD, [], [3 4]);
-                        case "monoStatic"
-                            SNR = max(obj.outputSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
-                            PD = max(config.PD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
-                    end
-                    title([processedSignalType sprintf(' signal SNR = %.3g dB, PFA = %.3e, PD = %.3g', SNR, config.PFA, PD)]); hold off;
+                    % switch obj.network.networkMode
+                    %     case "multiStatic"
+                    %         SNR = max(obj.outputSNR_dB, [], [3 4]);
+                    %         try
+                    %             globalPD = max(config.detector.globalPD, [], [3 4]);
+                    %         catch
+                    %             globalPD = nan;
+                    %         end
+                    %     case "monoStatic"
+                    %         SNR = max(obj.outputSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
+                    %         globalPD = max(config.detector.globalPD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
+                    % end
+                    % title([processedSignalType sprintf(' signal SNR = %.3g dB, PFA_{global} = %.3e, PD_{global} = %.3g', SNR, config.globalPFA, globalPD)]); hold off;
                 case 3
             end
             if isempty(pos)
@@ -3004,12 +2625,16 @@ classdef spu < handle
                     switch obj.network.networkMode
                         case "multiStatic"
                             SNR = max(obj.outputSNR_dB, [], [3 4]);
-                            PD = max(config.PD, [], [3 4]);
+                            try
+                                globalPD = max(config.detector.globalPD, [], [3 4]);
+                            catch
+                                globalPD = nan;
+                            end
                         case "monoStatic"
                             SNR = max(obj.outputSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
-                            PD = max(config.PD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
+                            globalPD = max(config.detector.globalPD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
                     end
-                    title(sprintf('compressed signal SNR = %.3g dB, PFA = %.3e, PD = %.3g', SNR, config.PFA, PD)); hold off;
+                    title(sprintf('compressed signal SNR = %.3g dB, PFA_{global} = %.3e, PD_{global} = %.3g', SNR, config.globalPFA, globalPD)); hold off;
                 case 3
             end
             if isempty(pos)
@@ -3025,52 +2650,6 @@ classdef spu < handle
             % title('residual power vs iteration ID of the compressing sensing algorithm');
             % legend('residual power', 'threshold', 'Location', 'best');
             % hold off; drawnow;
-        end
-
-        function visualizedirectlyintegratedsignals(obj, options)
-            arguments
-                obj
-                options.figureID double {mustBeInteger, mustBeNonnegative} = []
-                options.cuttingIndices double = [nan, nan, ceil(([obj.network.activeReceivingNodes(3 : end).numberOfSamplesPerCPI] + obj.network.pulseWidthSample(3 : end, 1).' - 1)/2)]
-            end
-            cuttingRxIDs = find(~isnan(options.cuttingIndices));
-            visualizedRxIDs = setdiff(1 : obj.network.numberOfActiveReceivingNodes, cuttingRxIDs);
-            Y = obj.signalsIntegratedDirectly;
-            if isempty(Y)
-                fprintf('"signalsIntegratedDirectly" is empty\n');
-                return;
-            end
-            if isempty(options.figureID)
-                figure;
-            else
-                figure(options.figureID);
-            end
-            for rxID = cuttingRxIDs
-                Y = indexer(Y, rxID, options.cuttingIndices(rxID));
-            end
-            function out = indexer
-                dimY = numel(size(Y));
-                expr = repmat(':,', 1, dimY);
-                expr = expr(1 : end - 1);
-                expr = [expr(1 : 2*rxID - 2), 'idx', expr(2*rxID : end)];
-                out = eval(['Y(', expr, ')']);
-            end
-            txID = 1;
-            t = cell(1, obj.network.numberOfActiveReceivingNodes);
-            for rxID = visualizedRxIDs
-                switch obj.network.activeTransmittingNodes(txID).transmissionType
-                    case "continuous"
-                        error('not implemented');
-                    case "pulsed"
-                        L = obj.network.pulseWidthSample(rxID, txID) - 1;
-                        N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI - 1;
-                end
-                t{rxID} = (-L : N)*obj.network.activeReceivingNodes(rxID).samplingPeriod*1e6;
-            end
-            mesh(t{visualizedRxIDs(1)}, t{visualizedRxIDs(2)}, 10*log10(squeeze(Y)));
-            xlabel(['\tau_{', num2str(visualizedRxIDs(1)), '} (\mus)']); ylabel(['\tau_{', num2str(visualizedRxIDs(2)), '} (\mus)']); zlabel('power (dB)');
-            xlim tight; ylim tight; zlim tight;
-            grid on; grid minor; colorbar;
         end
 
         function visualizeestimation(obj, options)
@@ -3097,11 +2676,7 @@ classdef spu < handle
             switch obj.network.networkMode
                 case "multiStatic"
                     est = obj.estimatedPositions;
-                    pos = cell(1, obj.network.numberOfActiveReceivingNodes);
-                    for rxID = 1 : obj.network.numberOfActiveReceivingNodes
-                        pos{rxID} = [est{rxID}{:, options.trialID}];
-                    end
-                    pos = [pos{:}];
+                    pos = est{options.trialID};
                     xEstimation = pos(1, :)/1e3;
                     yEstimation = pos(2, :)/1e3;
                     zEstimation = pos(3, :)/1e3;
@@ -3144,106 +2719,11 @@ classdef spu < handle
             posRX = repelem(posRX, 1, obj.interfaces.network.numberOfActiveTransmittingNodes);
             posTX = repmat(posTX, 1, obj.interfaces.network.numberOfActiveReceivingNodes);
             line([posRX(1, :); posTX(1, :)], [posRX(2, :); posTX(2, :)], [posRX(3, :); posTX(3, :)], 'lineStyle', '--', 'Color', 'k');
-            grid off; grid on; grid minor; title('scenario');
+            grid off; grid on; grid minor;
+            title('scenario');
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
             legend('RX', 'TX', 'targets', 'estimations', 'Location', 'best');
             view(0, 90); hold off; drawnow;
-        end
-
-        function visualizereceiveroperatingcharacteristics(obj, options)
-            arguments
-                obj
-                options.snr_dB (1, :) double = [0 3 10 13] % dB
-                options.numberOfReceivers (1, :) double = [1 : 5 10]
-                options.scanAlgorithms (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.scanAlgorithms, [0, 1])} = 0
-            end
-            nop = 1000;
-            if options.scanAlgorithms
-                PFA = logspace(-10, 0, nop);
-                PD = zeros(nop, 6);
-                currentAlgorithm = obj.processingAlgorithm;
-                cleanup = onCleanup(@() cleanupFunction(obj, currentAlgorithm));
-                for k = 1 : 6
-                    obj.configure("processingAlgorithm", k);
-                    PD(:, k) = obj.ROC(PFA, 10.^(.1*options.snr_dB(1)), obj.network.numberOfActiveBistaticPairs);
-                end
-                figure; semilogx(PFA, PD);
-                grid on; grid minor;
-                xlabel('PFA'); ylabel('PD');
-                leg = legend(num2str((1 : 6).'), 'Location', 'best');
-                title(leg, 'algorithm');
-                title("Receiver operating characteristic (ROC) curve for swerling " + num2str(obj.interfaces.swerling) + " \color{blue}SNR_{out} = " + num2str(options.snr_dB(1)) + " dB");
-            else
-                PFA = logspace(-10, 0, nop);
-                if ~isscalar(options.snr_dB)
-                    PD = zeros(nop, length(options.snr_dB));
-                    for k = 1 : length(options.snr_dB)
-                        PD(:, k) = obj.ROC(PFA, 10.^(.1*options.snr_dB(k)), obj.network.numberOfActiveBistaticPairs);
-                    end
-                    figure; semilogx(PFA, PD);
-                    grid on; grid minor;
-                    xlabel('PFA'); ylabel('PD');
-                    leg = legend(num2str(options.snr_dB.'), 'Location', 'best');
-                    switch obj.processingAlgorithm
-                        case 6
-                            title(leg, 'mean SNR_{out}');
-                        otherwise
-                            title(leg, 'SNR_{out}');
-                    end
-                    title("Receiver operating characteristic (ROC) curve of algorithm \color{blue}L_{" + num2str(obj.processingAlgorithm) + "} for swerling " + num2str(obj.interfaces.swerling));
-                else
-                    PD = zeros(nop, length(options.numberOfReceivers));
-                    for k = 1 : length(options.numberOfReceivers)
-                        PD(:, k) = obj.ROC(PFA, 10.^(.1*options.snr_dB), options.numberOfReceivers(k));
-                    end
-                    figure; semilogx(PFA, PD);
-                    grid on; grid minor;
-                    xlabel('PFA'); ylabel('PD');
-                    leg = legend(num2str(options.numberOfReceivers.', '%d'), 'Location', 'best');
-                    title(leg, 'N_{RX}');
-                    title("Receiver operating characteristic (ROC) curve of algorithm \color{blue}L_{" + num2str(obj.processingAlgorithm) + "} for swerling " + num2str(obj.interfaces.swerling));
-                end
-            end
-            function cleanupFunction(obj, detectionAlgorithm)
-                obj.configure("processingAlgorithm", detectionAlgorithm);
-            end
-        end
-
-        function visualizedetectioncharacteristics(obj, options)
-            arguments
-                obj
-                options.PFA (1, :) double = [1e-4 1e-6 1e-8]
-                options.numberOfReceivers (1, :) double = [1 : 5 10]
-            end
-            nop = 1000;
-            SNR = linspace(1, 33, nop);
-            if ~isscalar(options.PFA)
-                PD = zeros(nop, length(options.PFA));
-                for k = 1 : length(options.PFA)
-                    PD(:, k) = obj.ROC(options.PFA(k), 10.^(.1*SNR), obj.network.numberOfActiveReceivingNodes);
-                end
-                legStr = num2str(options.PFA.', '%.2e');
-                legTitle = 'PFA';
-            else
-                PD = zeros(nop, length(options.numberOfReceivers));
-                for n = 1 : length(options.numberOfReceivers)
-                    PD(:, n) = obj.ROC(options.PFA, 10.^(.1*SNR), options.numberOfReceivers(n));
-                end
-                legStr = num2str(options.numberOfReceivers.', '%d');
-                legTitle = 'N_{RX}';
-            end
-            figure; plot(SNR, PD);
-            grid on; grid minor;
-            switch obj.processingAlgorithm
-                case 6
-                    xlabel('mean SNR_{out} (dB)');
-                otherwise
-                    xlabel('SNR_{out} (dB)');
-            end
-            ylabel('PD');
-            leg = legend(legStr, 'Location', 'best');
-            title(leg, legTitle);
-            title("Detection characteristic curve of algorithm \color{blue}L_{" + num2str(obj.processingAlgorithm) + "} for swerling " + num2str(obj.interfaces.swerling));
         end
     end
 end

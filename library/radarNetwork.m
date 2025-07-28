@@ -8,8 +8,6 @@ classdef radarNetwork < handle
         receivingNodeActivity (1, :) logical = false % (1 x Nrx vector)
         transmittingNodeActivity (1, :) logical = false % (1 x Ntx vector)
         networkCoherency (1, 1) string {mustBeMember(networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = "coherent"
-        carrierMode (1, 1) string {mustBeMember(carrierMode, "bandPassProcessing")} = "bandPassProcessing"
-            % bandPassProcessing: transmitted signals perfectly resolved in carrier frequency
         fractionalDelayMode (1, 1) string {mustBeMember(fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = "off"
         networkMode (1, 1) string {mustBeMember(networkMode, ["multiStatic", "monoStatic"])} = "multiStatic"
         surveillanceMode (1, 1) string {mustBeMember(surveillanceMode, ["rotating", "electronicScan", "staticBeam", "custom"])} = "custom"
@@ -456,13 +454,11 @@ classdef radarNetwork < handle
             arguments
                 obj
                 options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = obj.networkCoherency
-                options.carrierMode (1, 1) string {mustBeMember(options.carrierMode, "bandPassProcessing")} = obj.carrierMode
                 options.fractionalDelayMode (1, 1) string {mustBeMember(options.fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = obj.fractionalDelayMode
                 options.networkMode (1, 1) string {mustBeMember(options.networkMode, ["multiStatic", "monoStatic"])} = obj.networkMode
                 options.beamTime (1, 1) double {mustBeNonnegative} = obj.beamTime % sec
             end
             obj.networkCoherency = options.networkCoherency;
-            obj.carrierMode = options.carrierMode;
             obj.fractionalDelayMode = options.fractionalDelayMode;
             obj.networkMode = options.networkMode;
             if strcmpi(obj.networkMode, "monoStatic")
@@ -657,22 +653,22 @@ classdef radarNetwork < handle
             hold off; drawnow;
         end
 
-        function visualizenetwork(obj, options)
+        function fig = visualizenetwork(obj, options)
             arguments
                 obj
                 options.figureID double {mustBeInteger, mustBeNonnegative} = []
             end
             if isempty(options.figureID)
-                figure;
+                fig = figure;
             else
-                figure(options.figureID);
+                fig = figure(options.figureID);
             end
             posRX = [obj.activeReceivingNodes.position]/1e3;
             posTX = [obj.activeTransmittingNodes.position]/1e3;
-            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 4, 'MarkerSize', 30);
-            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 4, 'MarkerSize', 30);
+            plot3(posRX(1, :), posRX(2, :), posRX(3, :), 'xb', 'LineWidth', 2, 'MarkerSize', 10);
+            hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 10);
             text(posRX(1, :), posRX(2, :), posRX(3, :), num2str((1 : obj.numberOfActiveReceivingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
-            text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "top");
+            % text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "top");
             for rxID = 1 : obj.numberOfActiveReceivingNodes
                 n = obj.activeReceivingNodes(rxID).array.normalVector;
                 quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'b');
@@ -684,13 +680,17 @@ classdef radarNetwork < handle
             posRX = repelem(posRX, 1, obj.numberOfActiveTransmittingNodes);
             posTX = repmat(posTX, 1, obj.numberOfActiveReceivingNodes);
             line([posRX(1, :); posTX(1, :)], [posRX(2, :); posTX(2, :)], [posRX(3, :); posTX(3, :)], 'lineStyle', '--', 'Color', 'k');
-            grid off; grid on; grid minor; title('radar network configuration');
+            grid off; grid on; grid minor;
+            % title('radar network configuration');
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
             legend('RX', 'TX', 'Location', 'best');
             ax = gca; lims = [ax.XLim; ax.YLim; ax.ZLim];
             lims = [min(lims(:)), max(lims(:))];
             xlim(lims); ylim(lims); zlim(lims);
-            axis equal; hold off; drawnow;
+            view(0, 90);
+            % axis equal;
+            hold off;
+            drawnow;
         end
     end
 end
