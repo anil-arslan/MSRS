@@ -128,7 +128,7 @@ colors = rgb2hex([ ...
     0.6350    0.0780    0.1840]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -8, 4001);
+pfaLocal = logspace(0, -6, 4001);
 algorithms = ["BC", "SLC"];
 M = 1 : 5;
 
@@ -178,11 +178,11 @@ end
 
 %% Decentralized Different SNR, SW 2 PD vs PFAlocal
 clc; clear; % close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -8, 1001);
+pfaLocal = logspace(0, -6, 1001);
 algorithms = ["SLC", "BC", "WSLC", "CVBC"];
 M = 9;
 snr = 8;

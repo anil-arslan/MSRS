@@ -4,7 +4,7 @@ addpath(genpath('C:\GitRepo\MSRS/figureGenerator'));
 
 %% Binary combining discrete threshold effect
 clc; clear; close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 algorithms = ["fixedLocalPFA", "fixedGlobal|LocalPFA"];
@@ -35,6 +35,7 @@ for signalModel = signalModels
         pd = squeeze(dtc.globalPD);
         pfa = squeeze(dtc.globalPFAanalytical);
         T = squeeze(dtc.globalThreshold);
+        q = squeeze(dtc.globalRandomizationProbability);
         switch algorithmID
             case 1
                 color = 'r';
@@ -51,7 +52,7 @@ for signalModel = signalModels
         end
     end
 end
-figure(fig2); yyaxis right; semilogx(pfaLocal, T, 'LineWidth', 2, 'LineStyle', '-.', 'Color', 'm'); hold on;
+figure(fig2); yyaxis right; semilogx(pfaLocal, T - q - .5, 'LineWidth', 2, 'LineStyle', '-.', 'Color', 'm'); hold on;
 ax = gca;
 ax.YAxis(2).Color = 'm';
 
@@ -68,7 +69,7 @@ grid on; grid minor;
 xlabel('Local Probability of False Alarm');
 yyaxis left; ylabel('Global Probability of False Alarm'); ylim([3.6e-11 3.6e-6])
 yyaxis right; ylabel('Global Threshold');
-legendStr = ["fixed thresholding", "randomized thresholding", "global threshold"];
+legendStr = ["fixed thresholding", "randomized thresholding", "effective threshold"];
 legend(legendStr, 'Location', 'best');
 
 if kayit

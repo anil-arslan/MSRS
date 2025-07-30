@@ -48,7 +48,7 @@ classdef interface < handle
         
         receivedPowerFromScatterers_dBW double % dB Watt (Ntx x Nrx x Nt x Nmcp matrix)
         receivedPowerFromTransmittingNodes_dBW double % dB Watt (Ntx x Nrx matrix)
-        inputSNR_dB double % dB (Ntx x Nrx x Nt x Nmcp matrix)
+        averageSNR_dB double % dB (Ntx x Nrx x Nt x Nmcp matrix)
         
         receivedEnergyFromScatterersPerPulse_dBJoule % dB Joule (Ntx x Nrx x Nt x Nmcp matrix)
         receivedEnergyFromScatterersPerSample_dBJoule % dB Joule (Ntx x Nrx x Nt x Nmcp matrix)
@@ -369,6 +369,16 @@ classdef interface < handle
                 Pr = powerGains - powerLosses;
                 Pr(isinf(Pr) & Pr > 0) = 20*log10(1/eps);
             end
+            CPIcontrol = obj.timeDelay - [obj.network.activeReceivingNodes.CPI] - [obj.network.activeReceivingNodes.samplingPeriod] > 0;
+            if size(CPIcontrol, 4) == 1
+                CPIcontrol = repmat(CPIcontrol, [1 1 1 size(Pr, 4)]);
+            end
+            Pr(CPIcontrol) = -inf;
+            backOfArrayControl = permute(obj.transmitBackOfArrayTarget, [3 4 1 2]) | permute(obj.receiveBackOfArrayTarget, [4 3 1 2]);
+            if size(backOfArrayControl, 4) == 1
+                backOfArrayControl = repmat(backOfArrayControl, [1 1 1 size(Pr, 4)]);
+            end
+            Pr(backOfArrayControl) = -inf;
         end
 
         function Pr = get.receivedPowerFromTransmittingNodes_dBW(obj)
@@ -380,7 +390,7 @@ classdef interface < handle
             Pr = powerGains - powerLosses;
         end
 
-        function SNRin = get.inputSNR_dB(obj)
+        function SNRin = get.averageSNR_dB(obj)
             % (Ntx x Nrx x Nt x Nmcp matrix)
             SNRin = obj.receivedPowerFromScatterers_dBW - [obj.network.activeReceivingNodes.noisePowerPerSample_dB];
         end
@@ -404,7 +414,7 @@ classdef interface < handle
             else
                 vdRx = pagemtimes(permute(obj.targets.velocity, [3 1 5 2 4]), permute(obj.unitDirectionRX, [1 5 2 3 4]));
                 vdTx = pagemtimes(permute(obj.targets.velocity, [3 1 5 2 4]), permute(obj.unitDirectionTX, [1 2 5 3 4]));
-                fd = shiftdim((vdRx + vdTx), 1)./obj.carrierWavelengthRealized;
+                fd = -shiftdim((vdRx + vdTx), 1)./obj.carrierWavelengthRealized;
             end
         end
 
@@ -487,11 +497,13 @@ classdef interface < handle
             end
         end
 
-        function s = get.signalReceivedFromScatterers(obj)
+        function y = get.signalReceivedFromScatterers(obj)
             % (1 x Nrx cell of Ns x 1 x Nt x Ntx x M x Nmcp matrix)
-            s = cell(1, obj.network.numberOfActiveReceivingNodes);
+            y = cell(1, obj.network.numberOfActiveReceivingNodes);
             targetComplexFluctuation = obj.fluctuation;
             powerReceived = obj.receivedPowerFromScatterers_dBW;
+            a = obj.receiveSteeringVector;
+            s = obj.waveformReceivedFromScatterers;
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 if obj.configuration.pathLoss
                     Pr = permute(10.^(.05*powerReceived(:, rxID, :, :)), [1 3 4 2]); % Ntx x Nt x Nmcp matrix
@@ -499,7 +511,7 @@ classdef interface < handle
                     Pr = ones(obj.network.numberOfActiveTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel);
                 end
                 alpha = permute(targetComplexFluctuation(:, rxID, :, :), [1 3 4 2]);
-                Aw = permute(alpha.*Pr, [4 5 2 1 3]).*obj.waveformReceivedFromScatterers(:, rxID, :, :, :); % Ns x 1 x Nt x Ntx x Nmcp matrix
+                Aw = permute(alpha.*Pr, [4 5 2 1 3]).*s(:, rxID, :, :, :); % Ns x 1 x Nt x Ntx x Nmcp matrix
                 M = obj.network.activeReceivingNodes(rxID).array.numberOfTotalElements;
                 Ns = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
                 if obj.configuration.noise
@@ -507,9 +519,9 @@ classdef interface < handle
                 else
                     n = 0;
                 end
-                s{rxID} = zeros(Ns, 1, obj.numberOfTargets, obj.network.numberOfActiveTransmittingNodes, M, obj.numberOfTrialsParallel);
+                y{rxID} = zeros(Ns, 1, obj.numberOfTargets, obj.network.numberOfActiveTransmittingNodes, M, obj.numberOfTrialsParallel);
                 for txID = 1 : obj.network.numberOfActiveTransmittingNodes
-                    s{rxID}(:, :, :, txID, :, :) = permute(Aw(:, :, :, txID, :), [1 2 3 4 6 5]).*permute(obj.receiveSteeringVector{txID, rxID}, [6 4 2 5 1 3]) + n;
+                    y{rxID}(:, :, :, txID, :, :) = permute(Aw(:, :, :, txID, :), [1 2 3 4 6 5]).*permute(a{txID, rxID}, [6 4 2 5 1 3]) + n;
                 end
             end
         end
@@ -617,31 +629,40 @@ classdef interface < handle
             end
         end
 
-        function s = get.signalSuperposed(obj)
+        function y = get.signalSuperposed(obj)
             % (1 x Nrx cell of Ns x M x Ntxch x Nmcp matrix)
-            s = cell(1, obj.network.numberOfActiveReceivingNodes);
+            y = cell(1, obj.network.numberOfActiveReceivingNodes);
             % transmitted signals perfectly resolved in carrier frequency
             sumDimension = 3; % superpose only signals reflected from targets
             % sumDimension = [3 4]; % superpose all signals transmitted and reflected from targets
             dimensionPermutation = [1 5 4 6 3 2]; % [Ns x 1 x Nt x Ntxch x M x Nmcp] --> [Ns x M x Ntxch x Nmcp x Nt x 1]
+
+            sRX = obj.signalReceivedFromScatterers;
+            if obj.configuration.directPath && strcmp(obj.network.networkMode, "multiStatic")
+                sTX = obj.signalReceivedFromTransmittingNodes;
+            else
+                sTX = 0;
+            end
+
             for rxID = 1 : obj.numberOfReceivingNodes
                 switch obj.network.networkMode
                     case "multiStatic"
                         if obj.configuration.directPath
-                            s{rxID} = permute(sum(obj.signalReceivedFromScatterers{rxID} + permute(obj.signalReceivedFromTransmittingNodes{rxID}, [1 2 5 3 4]), sumDimension), dimensionPermutation);
+                            y{rxID} = permute(sum(sRX{rxID} + permute(sTX{rxID}, [1 2 5 3 4]), sumDimension), dimensionPermutation);
                         else
-                            s{rxID} = permute(sum(obj.signalReceivedFromScatterers{rxID}, sumDimension), dimensionPermutation);
+                            y{rxID} = permute(sum(sRX{rxID}, sumDimension), dimensionPermutation);
                         end
                     case "monoStatic"
                         %%% other TX signals not implemented
-                        s{rxID} = permute(sum(obj.signalReceivedFromScatterers{rxID}(:, :, :, obj.network.monoStaticTransmitterIDs(rxID), :, :), sumDimension), dimensionPermutation);
+                        y{rxID} = permute(sum(sRX{rxID}(:, :, :, obj.network.monoStaticTransmitterIDs(rxID), :, :), sumDimension), dimensionPermutation);
                 end
             end
         end
 
-        function s = get.signalBeamformed(obj)
+        function y = get.signalBeamformed(obj)
             % (1 x Nrx cell of Ns x Nrxch x Ntxch x Nmcp matrix)
-            s = cell(1, obj.network.numberOfActiveReceivingNodes);
+            y = cell(1, obj.network.numberOfActiveReceivingNodes);
+            s = obj.signalSuperposed;
             for rxID = 1 : obj.numberOfReceivingNodes
                 switch obj.network.networkMode
                     case "multiStatic"
@@ -650,7 +671,7 @@ classdef interface < handle
                         wavelengths = obj.carrierWavelength(obj.network.monoStaticTransmitterIDs(rxID));
                 end
                 % M --> Nrxch (bypass: Nrxch = M)
-                s{rxID} = obj.network.activeReceivingNodes(rxID).beamform(obj.signalSuperposed{rxID}, wavelengths);
+                y{rxID} = obj.network.activeReceivingNodes(rxID).beamform(s{rxID}, wavelengths);
             end
         end
 
@@ -1175,7 +1196,7 @@ classdef interface < handle
             mustBeInRange(options.receivingNodeIDs, 1, obj.numberOfReceivingNodes);
             s = obj.signalSuperposed(options.receivingNodeIDs);
             for rxID = options.receivingNodeIDs
-                t = obj.network.activeReceivingNodes(rxID).samplingInstants;
+                t = obj.network.activeReceivingNodes(rxID).samplingInstants*1e6;
                 if isscalar(options.receivingNodeIDs)
                     y = 20*log10(abs(s{rxID}(:, :, options.trialID)));
                 else
@@ -1185,7 +1206,7 @@ classdef interface < handle
                 plot(t, y); hold on;
             end
             grid off; grid on; grid minor;
-            xlabel('time (s)'); ylabel('SNR (dB)');
+            xlabel('time (\mus)'); ylabel('SNR (dB)');
             title('received signal');
             if ~isscalar(options.receivingNodeIDs)
                 leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
@@ -1286,7 +1307,7 @@ classdef interface < handle
                 end
             end
             if any(strcmpi(options.curves, "power")) || any(strcmpi(options.curves, "all"))
-                fig = figure; contourf(x, y, reshape(obj.inputSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
+                fig = figure; contourf(x, y, reshape(obj.averageSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
                 hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
                 plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);

@@ -10,8 +10,7 @@ classdef spu < handle
             'numberOfTrialsParallel', 1)
         configuration (1, 1) struct = struct( ...
             'globalPFA', 1e-6, ...
-            'localPFA', 1, ...
-            'decentralizedFusion', false);
+            'localPFA', 1);
         configurationMonostatic (1, 1) struct = struct( ...
             'removeBoundaryDetectionDF', 1, ...
             'removeBoundaryDetectionMF', 0, ...
@@ -56,10 +55,10 @@ classdef spu < handle
     end
 
     properties (Dependent)
-        inputSNR_dB double % dB power, % (Ntx x Nrx x Nt x Nmcp matrix)
-        inputSNR_lin dobule % linear scale power, % (Ntx x Nrx x Nt x Nmcp matrix)
-        outputSNR_dB dobule % dB power, (1 x Nmonorx x Nt x Nmcp matrix)
-        outputSNR_lin dobule % linear scale power, (1 x Nmonorx x Nt x Nmcp matrix)
+        averageSNR_dB double % dB power, % (Ntx x Nrx x Nt x Nmcp matrix)
+        averageSNR_lin dobule % linear scale power, % (Ntx x Nrx x Nt x Nmcp matrix)
+        totalAverageSNR_dB dobule % dB power, (1 x Nmonorx x Nt x Nmcp matrix)
+        totalAverageSNR_lin dobule % linear scale power, (1 x Nmonorx x Nt x Nmcp matrix)
         noisePowersPerSample_W double {mustBePositive} % linear scale noise power
         integrationWeights double % (Ntx x Nrx x Ni matrix)
     end
@@ -166,40 +165,40 @@ classdef spu < handle
             net = obj.interfaces.network;
         end
 
-        function SNRin = get.inputSNR_lin(obj)
+        function SNRin = get.averageSNR_lin(obj)
             % (Ntx x Nrx x Nt x Nmcp matrix)
-            SNRin = 10.^(.1*obj.inputSNR_dB);
+            SNRin = 10.^(.1*obj.averageSNR_dB);
         end
 
-        function SNRin = get.inputSNR_dB(obj)
+        function SNRin = get.averageSNR_dB(obj)
             % (Ntx x Nrx x Nt x Nmcp matrix)
-            SNRin = obj.interfaces.inputSNR_dB;
+            SNRin = obj.interfaces.averageSNR_dB;
         end
 
-        function SNRout = get.outputSNR_lin(obj)
+        function SNRout = get.totalAverageSNR_lin(obj)
             % (1 x Nmonorx x Nt x Nmcp matrix)
             switch obj.network.networkMode
                 case "multiStatic"
-                    SNRout = sum(10.^(.1*(obj.network.processingGain_dB.' + obj.inputSNR_dB)), [1 2]); % (1 x 1 x Nt x Nmcp matrix)
+                    SNRout = sum(10.^(.1*(obj.network.processingGain_dB.' + obj.averageSNR_dB)), [1 2]); % (1 x 1 x Nt x Nmcp matrix)
                 case "monoStatic"
-                    SNRout = zeros([1 size(obj.inputSNR_dB, [2 3 4])]);
+                    SNRout = zeros([1 size(obj.averageSNR_dB, [2 3 4])]);
                     for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                         txID = obj.network.monoStaticTransmitterIDs(rxID);
-                        SNRout(:, rxID, :, :) = 10.^(.1*(obj.network.processingGain_dB(rxID, txID) + obj.inputSNR_dB(txID, rxID, :, :)));
+                        SNRout(:, rxID, :, :) = 10.^(.1*(obj.network.processingGain_dB(rxID, txID) + obj.averageSNR_dB(txID, rxID, :, :)));
                     end
             end
         end
 
-        function SNRout = get.outputSNR_dB(obj)
+        function SNRout = get.totalAverageSNR_dB(obj)
             % (1 x Nmonorx x Nt x Nmcp matrix)
-            SNRout = 10*log10(obj.outputSNR_lin);
+            SNRout = 10*log10(obj.totalAverageSNR_lin);
         end
 
         function cfg = get.configuration(obj)
             cfg = obj.configuration;
             cfg.detector = detector( ...
                 "globalPFA", cfg.globalPFA, ...
-                "SNR_input_dB", reshape(obj.inputSNR_lin(:, :, :, 1), obj.network.numberOfActiveBistaticPairs, []), ...
+                "SNR_input_dB", reshape(obj.averageSNR_lin(:, :, :, 1), obj.network.numberOfActiveBistaticPairs, []), ...
                 "numberOfSensors", obj.network.numberOfActiveBistaticPairs, ...
                 "localPFA", cfg.localPFA);
             switch obj.interfaces.spatialCoherency
@@ -341,7 +340,7 @@ classdef spu < handle
                                 preMatchFilteredSignal = conv(signalChannel, matchFilter);
                                 switch obj.preDetectionAlgorithm
                                     case 'thresholding'
-                                        preThreshold = config.detector.localThreshold{1};
+                                        preThreshold = config.detector.localThreshold{1}(rxID);
                                     case 'CACFAR'
                                         numberOfSamples = size(preMatchFilteredSignal, 1);
                                         preThreshold = zeros(numberOfSamples, 1);
@@ -359,34 +358,28 @@ classdef spu < handle
                                 end
                                 detectionIndices = find(abs(preMatchFilteredSignal).^2 > preThreshold);
                                 dictionaryCellIndices{rxID, txID, mcID} = ismember(obj.integrationIndices(txID, rxID, :), detectionIndices);
+                                measurements(setdiff(1 : Ns, detectionIndices), rxID, txID, mcID) = 0;
                                 % figure; plot(20*log10(abs(preMatchFilteredSignal)));
                                 % hold on; plot(10*log10(preThresholdCFAR));
                             end
                         end
                     end
-                    if config.decentralizedFusion
-                        preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
-                        preDetectionNodeIDs = cell(Nc, mc.numberOfTrialsParallel);
-                        % preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
-                        for mcID = 1 : mc.numberOfTrialsParallel
-                            preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nrx x Ntx x Nc matrix
-                            preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
-                            for cellID = 1 : Nc
-                                preDetectionNodeIDs{cellID, mcID} = find(preDetectionIndices(:, :, cellID)); % Nc x Nmcp cell
-                                % preDetectionNumberOfNodes(cellID, mcID) = numel(preDetectionNodeIDs{cellID, mcID}); % Nc x Nmcp matrix
-                            end
-                        end
-                    else
-                        preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
-                        for mcID = 1 : mc.numberOfTrialsParallel
-                            preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nrx x Ntx x Nc matrix
-                            preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
+                    preDetectionCellIDs = cell(1, mc.numberOfTrialsParallel);
+                    preDetectionNodeIDs = cell(Nc, mc.numberOfTrialsParallel);
+                    % preDetectionNumberOfNodes = zeros(Nc, mc.numberOfTrialsParallel);
+                    for mcID = 1 : mc.numberOfTrialsParallel
+                        preDetectionIndices = cell2mat(dictionaryCellIndices(:, :, mcID)); % Nrx x Ntx x Nc matrix
+                        preDetectionCellIDs{mcID} = find(any(preDetectionIndices, [1 2]));
+                        for cellID = 1 : Nc
+                            preDetectionNodeIDs{cellID, mcID} = find(preDetectionIndices(:, :, cellID)); % Nc x Nmcp cell
+                            % preDetectionNumberOfNodes(cellID, mcID) = numel(preDetectionNodeIDs{cellID, mcID}); % Nc x Nmcp matrix
                         end
                     end
                 else
                     preDetection = false;
                     preDetectionCellIDs = {};
                 end
+                preDetection = false;
 
                 targetThreshold = config.detector.globalThreshold;
                 numberOfIterations = Ns;
@@ -417,8 +410,8 @@ classdef spu < handle
                     residual = permute(measurements(:, :, :, mcID), [1 4 2 3]); % (Ns x 1 x Nrxch x Ntxch) or (Ns*Nrxch*Ntxch x 1)
                     for currentIterationID = 1 : numberOfIterations
                         preDetectionSuccessful = true;
-                        if ~preDetection || (preDetection && ~config.decentralizedFusion)
-                            % predetection kapali ise veya acik bile olsa #nodes adaptive degilse
+                        if ~preDetection
+                            % predetection kapali ise
                             projectedSignal = pagemtimes(dict, 'ctranspose', residual, 'none');
                             switch obj.globalFusionRule
                                 case "EGC"
@@ -451,26 +444,23 @@ classdef spu < handle
                         if ~preDetection
                             % predetection kapali ise
                             [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
+                            if obj.saveResiduals
+                                report(fusionID, mcID).integratedSignals(:, currentIterationID) = integratedSignal; % Ni x 1
+                            end
                         else
                             if ~isempty(preDetectionCellIDs{mcID})
-                                if config.decentralizedFusion
-                                    % predetection acik ama #nodes adaptive
-                                    [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal, [], 1);
-                                else
-                                    % predetection acik ama #nodes adaptive degilse
-                                    [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal(preDetectionCellIDs{mcID}), [], 1);
-                                end
+                                [maximumPowerHistory(currentIterationID), maxIndex] = max(integratedSignal, [], 1);
                                 cellID = preDetectionCellIDs{mcID}(maxIndex);
                             else
                                 % [maximumPowerHistory(currentIterationID), cellID] = max(integratedSignal, [], 1);
                                 fprintf('pre detection is unsuccessful at all nodes\n');
                                 preDetectionSuccessful = false;
                             end
+                            if obj.saveResiduals
+                                report(fusionID, mcID).integratedSignals(preDetectionCellIDs{mcID}, currentIterationID) = integratedSignal; % Ni x 1
+                            end
                         end
                         residualPowerHistory(currentIterationID) = sum(abs(residual).^2, 'all');
-                        if obj.saveResiduals
-                            report(fusionID, mcID).integratedSignals(:, currentIterationID) = integratedSignal; % Ni x 1
-                        end
                         % if currentIterationID == 1 && mcID == 1
                         %     fprintf('Max power = %g dB, Threshold = %g dB\n', 10*log10(maxPower), 10*log10(config.threshold));
                         % end
@@ -484,7 +474,7 @@ classdef spu < handle
                             thresholdReached = true;
                             break;
                         end
-                        if preDetection && config.decentralizedFusion
+                        if preDetection
                             if currentIterationID == 1
                                 report(fusionID, mcID).numberOfPreDetections = false(Nrxch*Ntxrx, 1);
                                 numberOfUtilizedNodes = numel(preDetectionNodeIDs{cellID, mcID});
@@ -580,7 +570,7 @@ classdef spu < handle
             mc = obj.monteCarlo;
             matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
             Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
-            signalsBeamformed = obj.interfaces.signalBeamformed;
+            signalBeamformed = obj.interfaces.signalBeamformed;
             y = cell(1, obj.network.numberOfActiveReceivingNodes);
             for rxID = 1 : obj.network.numberOfActiveReceivingNodes
                 numberOfTotalChannels = obj.network.activeReceivingNodes(rxID).numberOfTotalChannels;
@@ -591,7 +581,7 @@ classdef spu < handle
                         numberOfTransmitters = 1;
                 end
                 y{rxID} = zeros(Ns + size(matchFilters, 1) - 1, numberOfTotalChannels, numberOfTransmitters, mc.numberOfTrialsParallel);
-                s = signalsBeamformed{rxID}; % Ns x Nrxch x Ntxch x Nmcp matrix
+                s = signalBeamformed{rxID}; % Ns x Nrxch x Ntxch x Nmcp matrix
                 for txID = 1 : numberOfTransmitters
                     switch obj.network.networkMode
                         case 'multiStatic'
@@ -1093,7 +1083,7 @@ classdef spu < handle
             %%% add back of array to blind zone
             interfaceGrid = obj.hypothesizedInterface;
             if ~strcmpi(obj.network.surveillanceMode, "rotating")
-                backOfArray = all(interfaceGrid.transmitBackOfArrayTarget, 3) & all(interfaceGrid.receiveBackOfArrayTarget, 3);
+                backOfArray = all(interfaceGrid.transmitBackOfArrayTarget, 3) | all(interfaceGrid.receiveBackOfArrayTarget, 3);
             else
                 backOfArray = false(prod(obj.gridSize), 1);
             end
@@ -1197,7 +1187,6 @@ classdef spu < handle
                 obj
                 options.globalPFA (1, 1) double {mustBeNonnegative} = obj.configuration.globalPFA
                 options.localPFA (1, 1) double {mustBeNonnegative} = obj.configuration.localPFA
-                options.decentralizedFusion (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.decentralizedFusion, [0, 1])} = obj.configuration.decentralizedFusion
                 options.globalFusionRule (1, 1) string {mustBeMember(options.globalFusionRule, ["SLC", "WSLC", "BC", "CVBC", "LLC", "WLLC", "NSLC", "SC", "PSC", "EGC", "MRC"])} = "SLC"
                     %%% LRT: widely seperated receivers | spatially i.i.d circularly symmetric complex gaussian signal model
                     % SLC: Square Law Combining (LRT under equal SNR)
@@ -1228,7 +1217,6 @@ classdef spu < handle
             end
             obj.configuration.globalPFA = options.globalPFA;
             obj.configuration.localPFA = options.localPFA;
-            obj.configuration.decentralizedFusion = options.decentralizedFusion;
             obj.globalFusionRule = options.globalFusionRule;
             obj.detectionAlgorithm = options.detectionAlgorithm;
             obj.preDetectionAlgorithm = options.preDetectionAlgorithm;
@@ -1312,7 +1300,7 @@ classdef spu < handle
                 'meanSNRsModel', [], ...
                 'numberOfUtilizedNodes', []);
             obj.resolutionSimulationReport.globalPDrealized = zeros(prod(obj.gridSize), 1);
-            obj.resolutionSimulationReport.meanSNRsModel = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
+            obj.resolutionSimulationReport.meanSNRsModel = max(10*log10(mean(obj.totalAverageSNR_lin, 4)), [], 2);
             obj.resolutionSimulationReport.globalPDmodeled = obj.configuration.detector.globalPD;
             obj.resolutionSimulationReport.meanSNRsRealized = zeros(prod(obj.gridSize), 1);
             obj.resolutionSimulationReport.numberOfUtilizedNodes = zeros(prod(obj.gridSize), 1);
@@ -1527,8 +1515,8 @@ classdef spu < handle
                 obj.interfaces.settargets(target( ...
                     "position", targetPositions(:, targetID), ...
                     "meanRCS_dbsm", options.meanRCS_dbsm));
-                obj.coverageSimulationReport.meanSNRsModel(targetCellID) = max(10*log10(mean(obj.outputSNR_lin, 4)), [], 2);
-                currentDetector.setSNR(10*log10(mean(obj.inputSNR_lin, 4)).');
+                obj.coverageSimulationReport.meanSNRsModel(targetCellID) = max(10*log10(mean(obj.totalAverageSNR_lin, 4)), [], 2);
+                currentDetector.setSNR(10*log10(mean(obj.averageSNR_lin, 4)).');
                 obj.coverageSimulationReport.globalPDmodel(targetCellID) = currentDetector.globalPD;
                 for mcID = 1 : mc.numberOfTrials
                     if ~options.onCellCenters
@@ -1573,7 +1561,7 @@ classdef spu < handle
                     end
                 end
                 obj.coverageSimulationReport.meanSNRsRealized(targetCellID) = 10*log10(obj.coverageSimulationReport.meanSNRsRealized(targetCellID)./obj.coverageSimulationReport.globalPDrealized(targetCellID)/numberOfTotalTrials);
-                if ~mod(targetID, 10)
+                if ~mod(targetID, 100)
                     fprintf('target = %d/%d\n', targetID, numberOfCells);
                 end
             end
@@ -1585,12 +1573,14 @@ classdef spu < handle
             end
         end
 
-        function fig = visualizecoveragesimulation(obj, options)
+        function visualizecoveragesimulation(obj, options)
             arguments
                 obj
                 options.saveFigures (1, 1) {mustBeNumericOrLogical, mustBeMember(options.saveFigures, [0, 1])} = false
                 options.monoStaticNetworkRXID (1, 1) {mustBePositive, mustBeInteger} = 1
                 options.contourLevelDetection (1, 1) {mustBeNonnegative, mustBeInRange(options.contourLevelDetection, 0, 1)} = 0.85
+                options.saveFigure (1, 1) logical {mustBeNumericOrLogical, mustBeMember(options.saveFigure, [0, 1])} = false
+                options.header (1, :) char = datetime
             end
             if isempty(obj.coverageSimulationReport.targetCellIDs)
                 fprintf('coverage simulation had not executed\n');
@@ -1610,15 +1600,14 @@ classdef spu < handle
             meanSNRsModel = reshape(obj.coverageSimulationReport.meanSNRsModel(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
             meanSNRsRealized = reshape(obj.coverageSimulationReport.meanSNRsRealized(:, options.monoStaticNetworkRXID), obj.gridSize([2 1 3]));
 
-            fig(1) = figure;
-            img = imagesc(x1, x2, globalPDmodel);
+            fig1 = figure;
+            img = imagesc(x1, x2, globalPDmodel); ylim([-0.5 inf]);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             % set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            % title('Modeled Probability of Detection');
             hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
@@ -1626,17 +1615,23 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
             img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
-            hold off; drawnow;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_ideal_PD'];
+                savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Modeled Probability of Detection'); drawnow;
+            end
 
-            fig(1) = figure;
-            img = imagesc(x1, x2, globalPDrealized);
+            fig2 = figure;
+            img = imagesc(x1, x2, globalPDrealized); ylim([-0.5 inf]);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             % set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            % title('Realized Probability of Detection');
             hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
@@ -1644,17 +1639,26 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
             img.DataTipTemplate.DataTipRows(3).Value = globalPDrealized;
-            hold off; drawnow;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_realized_PD'];
+                savefig(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Realized Probability of Detection'); drawnow;
+            end
 
-            fig(2) = figure;
-            img = imagesc(x1, x2, meanSNRsModel);
-            colorbar; colormap('default'); clim([-inf, max(meanSNRsModel(meanSNRsModel < 300))]);
+            upperLim = max(max(meanSNRsModel(meanSNRsModel < 300), [], 'all'), max(meanSNRsRealized(meanSNRsRealized < 300), [], 'all'));
+            lowerLim = min(min(meanSNRsModel(~isinf(meanSNRsModel)), [], 'all'), min(meanSNRsRealized(~isinf(meanSNRsRealized)), [], 'all'));
+
+            fig3 = figure;
+            img = imagesc(x1, x2, meanSNRsModel); ylim([-0.5 inf]);
+            colorbar; colormap('default'); clim([lowerLim, upperLim]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid off; grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel);
-            % title('Modeled SNR averaged over trials');
             hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
@@ -1662,17 +1666,23 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
             img.DataTipTemplate.DataTipRows(3).Value = meanSNRsModel;
-            hold off; drawnow;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_ideal_SNR'];
+                savefig(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Modeled SNR averaged over trials'); drawnow;
+            end
 
-            fig(3) = figure;
-            img = imagesc(x1, x2, meanSNRsRealized);
-            colorbar; colormap('default');
+            fig4 = figure;
+            img = imagesc(x1, x2, meanSNRsRealized); ylim([-0.5 inf]);
+            colorbar; colormap('default'); clim([lowerLim, upperLim]);
             ax = gca; set(ax, 'Ydir', 'Normal');
             set(img, 'AlphaData', visibleZone);
             delete(datatip(img, 2, 2));
             grid off; grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel);
-            % title('Realized SNR with straddle loss averaged over trials');
             hold off;
             img.DataTipTemplate.DataTipRows(1).Label = "x";
             img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
@@ -1680,20 +1690,33 @@ classdef spu < handle
             img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
             img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
             img.DataTipTemplate.DataTipRows(3).Value = meanSNRsRealized;
-            hold off; drawnow;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_realized_SNR'];
+                savefig(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Realized SNR with straddle loss averaged over trials'); drawnow;
+            end
 
-            fig(4) = figure;
+            fig5 = figure;
             switch obj.network.networkMode
                 case 'monoStatic'
                     edgeColor = 'k';
                 case 'multiStatic'
                     edgeColor = 'r';
             end
-            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor);
+            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor); ylim([-0.5 inf]);
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            % title('Probability of detection');
-            hold off; drawnow;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_contour_PD'];
+                savefig(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Probability of detection'); drawnow;
+            end
         end
 
         %%%
@@ -2528,14 +2551,14 @@ classdef spu < handle
                     xlabel(xLabel); ylabel(yLabel); zlabel(zLabel);
                     % switch obj.network.networkMode
                     %     case "multiStatic"
-                    %         SNR = max(obj.outputSNR_dB, [], [3 4]);
+                    %         SNR = max(obj.totalAverageSNR_dB, [], [3 4]);
                     %         try
                     %             globalPD = max(config.detector.globalPD, [], [3 4]);
                     %         catch
                     %             globalPD = nan;
                     %         end
                     %     case "monoStatic"
-                    %         SNR = max(obj.outputSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
+                    %         SNR = max(obj.totalAverageSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
                     %         globalPD = max(config.detector.globalPD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
                     % end
                     % title([processedSignalType sprintf(' signal SNR = %.3g dB, PFA_{global} = %.3e, PD_{global} = %.3g', SNR, config.globalPFA, globalPD)]); hold off;
@@ -2624,14 +2647,14 @@ classdef spu < handle
                     xlabel(xLabel); ylabel(yLabel);
                     switch obj.network.networkMode
                         case "multiStatic"
-                            SNR = max(obj.outputSNR_dB, [], [3 4]);
+                            SNR = max(obj.totalAverageSNR_dB, [], [3 4]);
                             try
                                 globalPD = max(config.detector.globalPD, [], [3 4]);
                             catch
                                 globalPD = nan;
                             end
                         case "monoStatic"
-                            SNR = max(obj.outputSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
+                            SNR = max(obj.totalAverageSNR_dB(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
                             globalPD = max(config.detector.globalPD(:, options.monoStaticNetworkRXID, :, :), [], [3 4]);
                     end
                     title(sprintf('compressed signal SNR = %.3g dB, PFA_{global} = %.3e, PD_{global} = %.3g', SNR, config.globalPFA, globalPD)); hold off;
