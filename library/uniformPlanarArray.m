@@ -1,5 +1,5 @@
-classdef planarArray < handle
-    %planarArray Summary of this class goes here
+classdef uniformPlanarArray < handle
+    %uniformPlanarArray Summary of this class goes here
     %   Detailed explanation goes here
 
     properties (SetAccess = ?radarNetwork, GetAccess = public)
@@ -59,8 +59,8 @@ classdef planarArray < handle
     end
 
     methods
-        function obj = planarArray(options)
-            %planarArray Construct an instance of this class
+        function obj = uniformPlanarArray(options)
+            %uniformPlanarArray Construct an instance of this class
             %   Detailed explanation goes here
             arguments
                 options.numberOfElements (2, 1) double = ones(2, 1)
@@ -120,7 +120,7 @@ classdef planarArray < handle
         end
 
         function g = get.steeringUnitDirection(obj)
-            g = obj.rotationMatrix*[cosd(obj.steeringElevation).*cosd(obj.steeringAzimuth); cosd(obj.steeringElevation).*sind(obj.steeringAzimuth); sind(obj.steeringElevation)];
+            g = obj.rotationMatrix*[cosd(obj.steeringElevation).*cosd(obj.steeringAzimuth); obj.steeringUnitVector];
         end
 
         function p = get.steeringPositions(obj)
@@ -138,26 +138,7 @@ classdef planarArray < handle
                 options.scanDirection (1, :) string {mustBeMember(options.scanDirection, ["cw", "ccw"])} = [obj.scanDirection]
             end
             numberOfArrays = numel(obj);
-            if isscalar(options.roll)
-                options.roll = repmat(options.roll, 1, numberOfArrays);
-            elseif length(options.roll) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.pitch)
-                options.pitch = repmat(options.pitch, 1, numberOfArrays);
-            elseif length(options.pitch) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.yaw)
-                options.yaw = repmat(options.yaw, 1, numberOfArrays);
-            elseif length(options.yaw) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.scanDirection)
-                options.scanDirection = repmat(options.scanDirection, 1, numberOfArrays);
-            elseif length(options.scanDirection) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
+            options = checklength(options, numberOfArrays, 'number of arrays is');
             for arrayID = 1 : numberOfArrays
                 obj(arrayID).roll = options.roll(arrayID);
                 obj(arrayID).pitch = options.pitch(arrayID);
@@ -176,31 +157,7 @@ classdef planarArray < handle
 				options.backOfArrayRegion (1, :) double {mustBeInRange(options.backOfArrayRegion, 0, 360)} = [obj.backOfArrayRegion]
             end
             numberOfArrays = numel(obj);
-            if isscalar(options.rpm)
-                options.rpm = repmat(options.rpm, 1, numberOfArrays);
-            elseif length(options.rpm) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.steeringAzimuthStep)
-                options.steeringAzimuthStep = repmat(options.steeringAzimuthStep, 1, numberOfArrays);
-            elseif length(options.steeringAzimuthStep) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.steeringAzimuthLimit)
-                options.steeringAzimuthLimit = repmat(options.steeringAzimuthLimit, 1, numberOfArrays);
-            elseif length(options.steeringAzimuthLimit) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.backOfArray)
-                options.backOfArray = repmat(options.backOfArray, 1, numberOfArrays);
-            elseif length(options.backOfArray) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
-            if isscalar(options.backOfArrayRegion)
-                options.backOfArrayRegion = repmat(options.backOfArrayRegion, 1, numberOfArrays);
-            elseif length(options.backOfArrayRegion) ~= numberOfArrays
-                error('number of arrays is %d', numberOfArrays);
-            end
+            options = checklength(options, numberOfArrays, 'number of arrays is');
             for arrayID = 1 : numberOfArrays
                 obj(arrayID).rpm = options.rpm(arrayID);
                 obj(arrayID).steeringAzimuthStep = options.steeringAzimuthStep(arrayID);
@@ -276,13 +233,13 @@ classdef planarArray < handle
             else
                 figure(options.figureID);
             end
-            n = obj.normalVector.*max(obj.positions, [], 'all')/2;
             plot3(obj.positions(1, :), obj.positions(2, :), obj.positions(3, :), 'o');
-            hold on; quiver3(0, 0, 0, n(1), n(2), n(3));
             xlabel('x-axis (m)'); ylabel('y-axis (m)'); zlabel('z-axis (m)');
             grid off; grid on; grid minor;
-            title('sensor configuration');
-            hold off; drawnow;
+            % n = obj.normalVector.*max(obj.positions, [], 'all')/2;
+            % hold on; quiver3(0, 0, 0, n(1), n(2), n(3));
+            % title('sensor configuration'); hold off;
+            drawnow;
         end
     end
 end

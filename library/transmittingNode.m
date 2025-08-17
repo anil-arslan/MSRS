@@ -3,12 +3,13 @@ classdef transmittingNode < handle & dynamicprops
     %   Detailed explanation goes here
 
     properties (SetAccess = private, GetAccess = public)
-        array planarArray {mustBeScalarOrEmpty} = planarArray.empty()
+        array uniformPlanarArray {mustBeScalarOrEmpty} = uniformPlanarArray.empty()
         position (3, 1) double = zeros(3, 1)
-        inputPower_W (1, 1) double {mustBePositive} = 1e3 % Watt
+        peakPower_W (1, 1) double {mustBePositive} = 1e3 % Watt
     end
 
     properties (Dependent)
+        averagePower_W (1, 1) double {mustBePositive} % Watt
         transmittedEnergy (1, 1) double {mustBePositive} % Joule
         transmissionType (1, 1) string {mustBeMember(transmissionType, ["pulsed", "continuous"])}
     end
@@ -63,25 +64,25 @@ classdef transmittingNode < handle & dynamicprops
         function obj = transmittingNode(options)
             arguments
                 options.position (3, :) double = zeros(3, 1)
-                options.array (1, 1) planarArray = planarArray
-                options.inputPower_W (1, :) double {mustBePositive} = 1e3 % Watt
+                options.array (1, 1) uniformPlanarArray = uniformPlanarArray
+                options.peakPower_W (1, :) double {mustBePositive} = 1e3 % Watt
                 options.carrierFrequency (1, :) double {mustBePositive} = 1e9 % Hz
                 options.pulseWidth (1, :) double {mustBeNonnegative} = 1e-6 % sec
             end
             %transmittingNode Construct an instance of this class
             %   Detailed explanation goes here
-            numberOfNodes = max([size(options.position, 2), numel(options.array), numel(options.inputPower_W), numel(options.carrierFrequency), ...
+            numberOfNodes = max([size(options.position, 2), numel(options.array), numel(options.peakPower_W), numel(options.carrierFrequency), ...
                 numel(options.pulseWidth)]);
             if numberOfNodes == 1
                 obj.position = options.position;
-                obj.inputPower_W = options.inputPower_W;
+                obj.peakPower_W = options.peakPower_W;
                 obj.carrierFrequency = options.carrierFrequency;
                 obj.pulseWidth = options.pulseWidth;
                 obj.setunmodulation;
                 if isempty(options.array.node)
                     obj.array = options.array;
                 else
-                    obj.array = planarArray( ...
+                    obj.array = uniformPlanarArray( ...
                         "numberOfElements", options.array.numberOfElements, ...
                         "spacing", options.array.spacing, ...
                         "rpm", options.array.rpm, ...
@@ -95,19 +96,15 @@ classdef transmittingNode < handle & dynamicprops
                 elseif size(options.position, 2) ~= numberOfNodes
                     error('number of transmitting nodes is %d', numberOfNodes);
                 end
-                for fieldName = ["array", "inputPower_W", "carrierFrequency", "pulseWidth"]
-                    if isscalar(options.(fieldName))
-                        options.(fieldName) = repmat(options.(fieldName), 1, numberOfNodes);
-                    elseif numel(options.(fieldName)) ~= numberOfNodes
-                        error('number of transmitting nodes is %d', numberOfNodes);
-                    end
+                for fieldName = ["array", "peakPower_W", "carrierFrequency", "pulseWidth"]
+                    options.(fieldName) = checklength(options.(fieldName), numberOfNodes, 'number of transmitting nodes is');
                 end
                 obj = transmittingNode.empty(0, numberOfNodes);
                 for nodeID = 1 : numberOfNodes
                     obj(nodeID) = transmittingNode( ...
                         'position', options.position(:, nodeID), ...
                         'array', options.array(nodeID), ...
-                        'inputPower_W', options.inputPower_W(nodeID), ...
+                        'peakPower_W', options.peakPower_W(nodeID), ...
                         'carrierFrequency', options.carrierFrequency(nodeID), ...
                         'pulseWidth', options.pulseWidth(nodeID));
                 end
@@ -116,8 +113,12 @@ classdef transmittingNode < handle & dynamicprops
 
         %%% get methods
 
+        function E = get.averagePower_W(obj)
+            E = obj.peakPower_W.*obj.dutyCycle;
+        end
+
         function E = get.transmittedEnergy(obj)
-            E = obj.inputPower_W.*obj.pulseWidth.*obj.numberOfPulses;
+            E = obj.peakPower_W.*obj.pulseWidth.*obj.numberOfPulses;
         end
 
         function out = get.transmissionType(obj)
@@ -133,7 +134,7 @@ classdef transmittingNode < handle & dynamicprops
         end
 
         function Gt = get.peakTransmitGain(obj)
-            Gt = 4*pi*obj.array.apertureArea./obj.carrierWavelength.^2;
+            Gt = (4*pi*obj.array.apertureArea./obj.carrierWavelength.^2).*(sum(obj.taperSpatial).^2./obj.array.numberOfTotalElements);
         end
 
         function a = get.steeringVector(obj)
@@ -170,50 +171,28 @@ classdef transmittingNode < handle & dynamicprops
             u = @(t) double(t > 0); % unit step function
             switch obj.transmissionType
                 case "pulsed"
-                    r = @(t) u(t + obj.pulseWidth) - u(t);
+                    r = @(t, Ts) u(t + obj.pulseWidth - Ts/2) - u(t - Ts/2);
                 case "continuous"
-                    r = @(t) u(-t);
+                    r = @(t, Ts) u(-t);
             end
-            switch obj.modulationType % complex modulation waveforms
+            switch obj.modulationType % complex modulated waveforms
                 case "unmodulated"
-                    s = @(t) obj.taperFastTimeSamples(t).*r(t);
+                    s = @(t, Ts) r(t, Ts);
                 case "linearFrequencyModulated"
-                    s = @(t) LFM(t);
+                    s = @(t, Ts) LFM(t, Ts);
             end
-            function sig = LFM(t)
+            function sig = LFM(t, Ts)
                 sig = zeros(size(t));
                 finiteInstants = ~isinf(t);
                 t = t(finiteInstants);
                 switch obj.frequencyDirection
                     case "increasing"
-                        sig(finiteInstants) = obj.taperFastTimeSamples(t).*r(t).*exp(1j*pi*(obj.bandWidth/obj.pulseWidth)*(t + obj.pulseWidth).^2 + 1j*2*pi*obj.frequencyOffset*(t + obj.pulseWidth));
+                        sig(finiteInstants) = r(t, Ts).*exp(1j*pi*(obj.bandWidth/obj.pulseWidth)*(t + obj.pulseWidth).^2 + 1j*2*pi*obj.frequencyOffset*(t + obj.pulseWidth));
                     case "decreasing"
-                        sig(finiteInstants) = obj.taperFastTimeSamples(t).*r(t).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*t.^2 + 1j*2*pi*obj.frequencyOffset.*t);
+                        sig(finiteInstants) = r(t, Ts).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*t.^2 + 1j*2*pi*obj.frequencyOffset.*t);
+                    case "symmetric"
                 end
             end
-        end
-
-        function T = taperFastTimeSamples(obj, samplingInstants)
-            pulseInstants = samplingInstants <= 0 & samplingInstants > -permute([obj.pulseWidth], [1 4 3 2]);
-            numberOfReceivingNodes = size(samplingInstants, 2);
-            numberOfTransmittingNodes = numel(obj);
-            numberOfTargets = size(samplingInstants, 3);
-            T = zeros(size(samplingInstants, 1), numberOfTargets, numberOfReceivingNodes, numberOfTransmittingNodes);
-            for rxID = 1 : numberOfReceivingNodes
-                for txID = 1: numberOfTransmittingNodes
-                    switch obj(txID).taperTypeFastTime
-                        case "rectwin"
-                            T = 1;
-                        otherwise
-                            targetInstants = any(pulseInstants(:, rxID, :, txID), 1);
-                            t = eval(obj(txID).taperTypeFastTime + "(max(sum(pulseInstants(:, rxID, :, txID))))");
-                            K = size(samplingInstants, 1)*numberOfTargets;
-                            idx = find(pulseInstants(:, rxID, targetInstants, txID)) + (rxID - 1)*K + (txID - 1)*(rxID - 1)*K;
-                            T(idx) = repmat(t, sum(targetInstants), 1);
-                    end
-                end
-            end
-            T = permute(T, [1 3 2 4]);
         end
 
         %%% set methods
@@ -244,13 +223,13 @@ classdef transmittingNode < handle & dynamicprops
         function settransmission(obj, options)
             arguments
                 obj
-                options.inputPower_W (1, :) double {mustBePositive} = [] % W
+                options.peakPower_W (1, :) double {mustBePositive} = [] % W
                 options.carrierFrequency (1, :) double {mustBePositive} = [] % Hz
                 options.pulseWidth (1, :) double {mustBeNonnegative} = [] % sec
                 options.dutyCycle (1, :) double {mustBeNonnegative} = [] % sec
             end
             numberOfTransmittingNodes = numel(obj);
-            fieldNames = ["inputPower_W", "carrierFrequency", "pulseWidth", "dutyCycle"];
+            fieldNames = ["peakPower_W", "carrierFrequency", "pulseWidth", "dutyCycle"];
             for fieldName = fieldNames
                 if ~isempty(options.(fieldName))
                     if isscalar(options.(fieldName))
@@ -288,7 +267,7 @@ classdef transmittingNode < handle & dynamicprops
                 obj
                 options.frequencyOffset (1, :) double {mustBeNonnegative} = 0 % Hz
                 options.bandWidth (1, :) double {mustBeNonnegative} = 5e6 % Hz
-                options.frequencyDirection (1, :) string {mustBeMember(options.frequencyDirection, ["increasing", "decreasing"])} = "increasing"
+                options.frequencyDirection (1, :) string {mustBeMember(options.frequencyDirection, ["increasing", "decreasing", "symmetric"])} = "symmetric"
             end
             numberOfTransmittingNodes = numel(obj);
             fieldNames = ["frequencyOffset", "bandWidth", "frequencyDirection"];
@@ -335,7 +314,7 @@ classdef transmittingNode < handle & dynamicprops
         function visualizewaveform(obj, options)
             arguments
                 obj
-                options.domain (1, 1) string {mustBeMember(options.domain, ["time", "frequency"])} = "time"
+                options.domain (1, 1) string {mustBeMember(options.domain, ["time", "frequency"])} = "frequency"
                 options.plot (1, 1) string {mustBeMember(options.plot, ["magnitude", "phase", "real", "imaginary"])} = "magnitude"
             end
             figure; hold on;
@@ -345,21 +324,21 @@ classdef transmittingNode < handle & dynamicprops
                     case "time"
                         Ns = 1024;
                         if isinf(obj(txID).pulseWidth)
-                            ts = 1/obj(txID).frequencyOffset;
-                            t = -Ns*ts : ts : 0;
+                            Ts = 1/obj(txID).frequencyOffset;
+                            t = -Ns*Ts : Ts : 0;
                         else
-                            ts = obj(txID).pulseWidth/Ns;
-                            t = -obj(txID).pulseWidth + ts : ts : 0;
+                            Ts = obj(txID).pulseWidth/Ns;
+                            t = -obj(txID).pulseWidth + Ts : Ts : 0;
                         end
                         switch options.plot
                             case "magnitude"
-                                plot(t*1e6, abs(obj(txID).waveform(t)));
+                                plot(t*1e6, 20*log10(abs(obj(txID).waveform(t, Ts))));
                             case "phase"
-                                plot(t*1e6, 180*unwrap(angle(obj(txID).waveform(t)))/pi);
+                                plot(t*1e6, 180*unwrap(angle(obj(txID).waveform(t, Ts)))/pi);
                             case "real"
-                                plot(t*1e6, real(obj(txID).waveform(t)));
+                                plot(t*1e6, real(obj(txID).waveform(t, Ts)));
                             case "imaginary"
-                                plot(t*1e6, imag(obj(txID).waveform(t)));
+                                plot(t*1e6, imag(obj(txID).waveform(t, Ts)));
                         end
                     case "frequency"
                         Nsover = 4;
@@ -368,19 +347,19 @@ classdef transmittingNode < handle & dynamicprops
                         else
                             Ns = 16;
                         end
-                        ts = obj(txID).pulseWidth/Ns;
-                        t = -obj(txID).pulseWidth + ts : ts : 0;
+                        Ts = obj(txID).pulseWidth/Ns;
+                        t = -obj(txID).pulseWidth + Ts : Ts : 0;
                         nfft = Ns*Nsover;
-                        f = (-nfft/2 : nfft/2 - 1)/ts/nfft/1e6;
+                        f = (-nfft/2 : nfft/2 - 1)/Ts/nfft/1e6;
                         switch options.plot
                             case "magnitude"
-                                plot(f, 20*log10(fftshift(abs(fft(obj(txID).waveform(t), nfft)))));
+                                plot(f, 20*log10(fftshift(abs(fft(obj(txID).waveform(t, Ts), nfft)))));
                             case "phase"
-                                plot(f, 180*unwrap(fftshift(angle(fft(obj(txID).waveform(t), nfft))))/pi);
+                                plot(f, 180*unwrap(fftshift(angle(fft(obj(txID).waveform(t, Ts), nfft))))/pi);
                             case "real"
-                                plot(f, 20*log10(fftshift(real(fft(obj(txID).waveform(t), nfft)))));
+                                plot(f, 20*log10(fftshift(real(fft(obj(txID).waveform(t, Ts), nfft)))));
                             case "imaginary"
-                                plot(f, 20*log10(fftshift(imag(fft(obj(txID).waveform(t), nfft)))));
+                                plot(f, 20*log10(fftshift(imag(fft(obj(txID).waveform(t, Ts), nfft)))));
                         end
                 end
             end

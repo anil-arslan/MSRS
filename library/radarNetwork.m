@@ -7,8 +7,7 @@ classdef radarNetwork < handle
         transmittingNodes (1, :) transmittingNode = transmittingNode.empty() % (1 x Ntx vector)
         receivingNodeActivity (1, :) logical = false % (1 x Nrx vector)
         transmittingNodeActivity (1, :) logical = false % (1 x Ntx vector)
-        networkCoherency (1, 1) string {mustBeMember(networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = "coherent"
-        fractionalDelayMode (1, 1) string {mustBeMember(fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = "off"
+        networkCoherency (1, 1) string {mustBeMember(networkCoherency, ["coherent", "short-term coherent", "noncoherent"])} = "coherent"
         networkMode (1, 1) string {mustBeMember(networkMode, ["multiStatic", "monoStatic"])} = "multiStatic"
         surveillanceMode (1, 1) string {mustBeMember(surveillanceMode, ["rotating", "electronicScan", "staticBeam", "custom"])} = "custom"
         beamTime (1, 1) double {mustBeNonnegative} % sec
@@ -48,10 +47,10 @@ classdef radarNetwork < handle
         boundaryListened (3, 2) double
         defaultGridResolution (3, 1) double {mustBeNonnegative}
         pulseWidthSample double % (Nrx x Ntx matrix)
-        dutyCycles double % (Nrx x Nrx matrix)
+        dutyCycles double % (Nrx x Ntx matrix)
         matchFilter double % (L x Nrx x Ntx matrix)
         matchFilterGain_dB double % (Nrx x Ntx matrix)
-        beamformingGain_dB double % (Nrx x 1 matrix)
+        beamformingGain_dB double % (Nrx x 1 vector)
         processingGain_dB double % (Nrx x Ntx matrix)
         noisePSDmatrix double % W/Hz (Nrx x Nrx matrix)
     end
@@ -74,7 +73,7 @@ classdef radarNetwork < handle
             arguments
                 options.receivingNodes (1, :) receivingNode = receivingNode.empty()
                 options.transmittingNodes (1, :) transmittingNode = transmittingNode.empty()
-                options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = "coherent"
+                options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "noncoherent"])} = "coherent"
             end
             %radarNetwork Construct an instance of this class
             %   Detailed explanation goes here
@@ -211,11 +210,13 @@ classdef radarNetwork < handle
         end
 
         function pos = get.positionReceivingNode(obj)
+            % (3 x Ntx x Nrx matrix)
             pos = repelem([obj.activeReceivingNodes.position], 1, obj.numberOfActiveTransmittingNodes);
             pos = reshape(pos, 3, obj.numberOfActiveTransmittingNodes, obj.numberOfActiveReceivingNodes);
         end
 
         function pos = get.positionTransmittingNode(obj)
+            % (3 x Ntx x Nrx matrix)
             pos = repmat([obj.activeTransmittingNodes.position], 1, obj.numberOfActiveReceivingNodes);
             pos = reshape(pos, 3, obj.numberOfActiveTransmittingNodes, obj.numberOfActiveReceivingNodes);
         end
@@ -232,10 +233,12 @@ classdef radarNetwork < handle
         end
 
         function tau = get.directPathDelay(obj)
+            % (Ntx x Nrx matrix)
             tau = obj.distanceBaseline./obj.speedOfLight;
         end
 
         function origin = get.center(obj)
+            % (3 x 1 vector)
             switch obj.networkMode
                 case 'monoStatic'
                     txIDs = obj.monoStaticTransmitterIDs;
@@ -250,6 +253,7 @@ classdef radarNetwork < handle
         end
 
         function lims = get.boundary(obj)
+            % (3 x 2 matrix)
             switch obj.networkMode
                 case 'monoStatic'
                     txIDs = obj.monoStaticTransmitterIDs;
@@ -265,6 +269,7 @@ classdef radarNetwork < handle
         end
 
         function lims = get.boundaryListened(obj)
+            % (3 x 2 matrix)
             lims = obj.boundary;
             offset = max([obj.activeReceivingNodes.listenedRadius]);
             if ~isempty(offset)
@@ -274,7 +279,9 @@ classdef radarNetwork < handle
         end
 
         function res = get.defaultGridResolution(obj)
-            res = diff(obj.boundaryListened, [], 2)/100;
+            % (3 x 1 matrix)
+            rangeResolutionMonoStatic = unique(obj.speedOfLight*[obj.activeReceivingNodes.samplingPeriod]/2); % 1 x Nrx matrix
+            res = diff(obj.boundaryListened, [], 2)/rangeResolutionMonoStatic;
         end
 
         function N = get.pulseWidthSample(obj)
@@ -283,6 +290,7 @@ classdef radarNetwork < handle
         end
 
         function D = get.dutyCycles(obj)
+            % (Nrx x Ntx matrix)
             D = obj.pulseWidthSample./[obj.activeReceivingNodes.numberOfSamplesPerCPI].';
         end
 
@@ -303,29 +311,35 @@ classdef radarNetwork < handle
                             mf = ones(size(t, 1), obj.numberOfActiveReceivingNodes, obj.numberOfActiveTransmittingNodes);
                         case "pulsed"
                             t = zeros(Nunique, obj.numberOfActiveReceivingNodes);
+                            taper = zeros(Nunique, obj.numberOfActiveReceivingNodes);
                             mf = zeros(Nunique, obj.numberOfActiveReceivingNodes, obj.numberOfActiveTransmittingNodes);
                             for txID = 1 : obj.numberOfActiveTransmittingNodes
+                                funcTaper = eval("@" + obj.activeTransmittingNodes(txID).taperTypeFastTime);
                                 for rxID = 1 : obj.numberOfActiveReceivingNodes
                                     t(:, rxID) = ((1 - N(rxID, txID) : 0)*Ts(rxID));
+                                    taper(:, rxID) = funcTaper(N(rxID, txID));
                                 end
-                                mf(:, :, txID) = obj.activeTransmittingNodes(txID).waveform(t);
+                                mf(:, :, txID) = taper.*obj.activeTransmittingNodes(txID).waveform(t, Ts(rxID));
                             end
                     end
-                    mf = mf./sqrt(sum(abs(mf).^2, 1));
+                    mf = mf./vecnorm(mf);
                 otherwise
                     error('not implemented');
             end
         end
 
         function G = get.matchFilterGain_dB(obj)
+            % (Nrx x Ntx matrix)
             G = permute(20*log10(sum(abs(obj.matchFilter), 1)), [2 3 1]);
         end
 
         function G = get.beamformingGain_dB(obj)
+            % (Nrx x 1 vector)
             G = [obj.activeReceivingNodes.beamformingGain_dB].';
         end
 
         function G = get.processingGain_dB(obj)
+            % (Nrx x Ntx matrix)
             G = obj.matchFilterGain_dB + obj.beamformingGain_dB;
         end
 
@@ -453,13 +467,11 @@ classdef radarNetwork < handle
         function settingsnetwork(obj, options)
             arguments
                 obj
-                options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "incoherent"])} = obj.networkCoherency
-                options.fractionalDelayMode (1, 1) string {mustBeMember(options.fractionalDelayMode, ["sinc-based", "lagrange-based", "off"])} = obj.fractionalDelayMode
+                options.networkCoherency (1, 1) string {mustBeMember(options.networkCoherency, ["coherent", "short-term coherent", "noncoherent"])} = obj.networkCoherency
                 options.networkMode (1, 1) string {mustBeMember(options.networkMode, ["multiStatic", "monoStatic"])} = obj.networkMode
                 options.beamTime (1, 1) double {mustBeNonnegative} = obj.beamTime % sec
             end
             obj.networkCoherency = options.networkCoherency;
-            obj.fractionalDelayMode = options.fractionalDelayMode;
             obj.networkMode = options.networkMode;
             if strcmpi(obj.networkMode, "monoStatic")
                 obj.receivingNodeActivity = obj.receivingNodeActivity & ~isnan(obj.monoStaticTransmitterIDs);
@@ -669,14 +681,14 @@ classdef radarNetwork < handle
             hold on; plot3(posTX(1, :), posTX(2, :), posTX(3, :), '+r', 'LineWidth', 2, 'MarkerSize', 10);
             text(posRX(1, :), posRX(2, :), posRX(3, :), num2str((1 : obj.numberOfActiveReceivingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "bottom");
             % text(posTX(1, :), posTX(2, :), posTX(3, :), num2str((1 : obj.numberOfActiveTransmittingNodes).'), "FontSize", 20, "FontWeight", "bold", "HorizontalAlignment", "left", "VerticalAlignment", "top");
-            for rxID = 1 : obj.numberOfActiveReceivingNodes
-                n = obj.activeReceivingNodes(rxID).array.normalVector;
-                quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'b');
-            end
-            for txID = 1 : obj.numberOfActiveTransmittingNodes
-                n = obj.activeTransmittingNodes(txID).array.normalVector;
-                quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), n(1), n(2), n(3), 'r');
-            end
+            % for rxID = 1 : obj.numberOfActiveReceivingNodes
+            %     n = obj.activeReceivingNodes(rxID).array.normalVector;
+            %     quiver3(posRX(1, rxID), posRX(2, rxID), posRX(3, rxID), n(1), n(2), n(3), 'b');
+            % end
+            % for txID = 1 : obj.numberOfActiveTransmittingNodes
+            %     n = obj.activeTransmittingNodes(txID).array.normalVector;
+            %     quiver3(posTX(1, txID), posTX(2, txID), posTX(3, txID), n(1), n(2), n(3), 'r');
+            % end
             posRX = repelem(posRX, 1, obj.numberOfActiveTransmittingNodes);
             posTX = repmat(posTX, 1, obj.numberOfActiveReceivingNodes);
             line([posRX(1, :); posTX(1, :)], [posRX(2, :); posTX(2, :)], [posRX(3, :); posTX(3, :)], 'lineStyle', '--', 'Color', 'k');

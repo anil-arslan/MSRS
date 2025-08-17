@@ -4,7 +4,7 @@ classdef receivingNode < handle
 
     properties (SetAccess = private, GetAccess = public)
         beamformingMode (1, 1) string {mustBeMember(beamformingMode, ["conventional", "bypass"])} = "conventional"
-        array planarArray {mustBeScalarOrEmpty} = planarArray.empty()
+        array uniformPlanarArray {mustBeScalarOrEmpty} = uniformPlanarArray.empty()
         position (3, 1) double = zeros(3, 1)
         systemLoss_dB (1, 1) double {mustBeNonnegative} = 0 % dB
         noiseFigure_dB (1, 1) double {mustBeNonnegative} = 0 % dB
@@ -64,7 +64,7 @@ classdef receivingNode < handle
         function obj = receivingNode(options)
             arguments
                 options.position (3, :) double = zeros(3, 1)
-                options.array (1, :) planarArray = planarArray
+                options.array (1, :) uniformPlanarArray = uniformPlanarArray
                 options.systemLoss (1, :) double {mustBeNonnegative} = 0 % dB
                 options.samplingFrequency (1, :) double {mustBeNonnegative} = 4e7 % Hz
                 options.temperature (1, :) double {mustBeNonnegative} = 300 % Kelvin
@@ -85,7 +85,7 @@ classdef receivingNode < handle
                 if isempty(options.array.node)
                     obj.array = options.array;
                 else
-                    obj.array = planarArray( ...
+                    obj.array = uniformPlanarArray( ...
                         "numberOfElements", options.array.numberOfElements, ...
                         "spacing", options.array.spacing, ...
                         "rpm", options.array.rpm, ...
@@ -99,12 +99,8 @@ classdef receivingNode < handle
                 elseif size(options.position, 2) ~= numberOfNodes
                     error('number of receiving nodes is %d', numberOfNodes);
                 end
-                for field = ["array", "systemLoss", "samplingFrequency", "temperature", "noiseFigure", "CPIsecond"]
-                    if isscalar(options.(field))
-                        options.(field) = repmat(options.(field), 1, numberOfNodes);
-                    elseif size(options.(field), 2) ~= numberOfNodes
-                        error('number of receiving nodes is %d', numberOfNodes);
-                    end
+                for fieldName = ["array", "systemLoss", "samplingFrequency", "temperature", "noiseFigure", "CPIsecond"]
+                    options.(fieldName) = checklength(options.(fieldName), numberOfNodes, 'number of receiving nodes is');
                 end
                 obj = receivingNode.empty(0, numberOfNodes);
                 for nodeID = 1 : numberOfNodes
@@ -119,6 +115,8 @@ classdef receivingNode < handle
                 end
             end
         end
+
+        %%% get methods
 
         function T = get.taperSpatial(obj)
             funcTaper = eval("@" + obj.taperTypeSpatial);
@@ -135,7 +133,8 @@ classdef receivingNode < handle
                 case 'conventional'
                     G = 20*log10(sum(obj.taperSpatial, 1));
                 case 'bypass'
-                    G = 10*log10([obj.array.numberOfTotalElements].');
+                    % G = 10*log10([obj.array.numberOfTotalElements].');
+                    G = 0;
             end
         end
 
@@ -144,7 +143,7 @@ classdef receivingNode < handle
         end
 
         function g = get.beamCenterUnitDirection(obj)
-            g = obj.array.rotationMatrix*[cosd(obj.beamCentersElevation).*cosd(obj.beamCentersAzimuth); cosd(obj.beamCentersElevation).*sind(obj.beamCentersAzimuth); sind(obj.beamCentersElevation)];
+            g = obj.array.rotationMatrix*[cosd(obj.beamCentersElevation).*cosd(obj.beamCentersAzimuth);obj.beamCenterUnitVector];
         end
 
         function p = get.beamCenterPositions(obj)
@@ -177,7 +176,7 @@ classdef receivingNode < handle
         end
 
         function N = get.numberOfSamplesPerCPI(obj)
-            N = round(obj.CPI.*obj.samplingFrequency);
+            N = ceil(obj.CPI.*obj.samplingFrequency);
         end
 
         %%% set methods

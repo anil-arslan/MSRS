@@ -116,7 +116,7 @@ end
 
 %% Decentralized Equal SNR, SW 2 PD vs PFAlocal
 clc; clear; % close all;
-kayit = 1;
+kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 colors = rgb2hex([ ...
     0.0000    0.4470    0.7410 % blue
@@ -128,7 +128,7 @@ colors = rgb2hex([ ...
     0.6350    0.0780    0.1840]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -6, 4001);
+pfaLocal = logspace(0, -20, 1001);
 algorithms = ["BC", "SLC"];
 M = 1 : 5;
 
@@ -178,11 +178,11 @@ end
 
 %% Decentralized Different SNR, SW 2 PD vs PFAlocal
 clc; clear; % close all;
-kayit = 1;
+kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -6, 1001);
+pfaLocal = logspace(0, -12, 101);
 algorithms = ["SLC", "BC", "WSLC", "CVBC"];
 M = 9;
 snr = 8;

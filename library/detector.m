@@ -203,8 +203,14 @@ classdef detector < handle
             switch obj.globalFusionRule
                 case "WSLC"
                     for scanID = 1 : numberOfScans
-                        snr = 10.^(.1*obj.SNR_input_dB{scanID});
-                        w{scanID} = repmat(snr./(1 + snr), [1 1 1 numberOfScansLocalPFA]);
+                        switch obj.signalAmplitudeModel
+                            case "decorrelatedExponential"
+                                snr = 10.^(.1*obj.SNR_input_dB{scanID});
+                                w{scanID} = repmat(snr./(1 + snr), [1 1 1 numberOfScansLocalPFA]);
+                            case "correlatedExponential"
+                                w{scanID} = repmat(10.^(.1*obj.SNR_input_dB{scanID}), [1 1 1 numberOfScansLocalPFA]);
+                                w{scanID} = w{scanID}./sum(w{scanID}, 1);
+                        end
                     end
                 case "CVBC"
                     for scanID = 1 : numberOfScans
@@ -252,7 +258,12 @@ classdef detector < handle
             end
             Tlocal = obj.localThreshold;
             weights = obj.fusionWeights;
-            numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
+            switch obj.globalFusionRule
+                case {"WSLC", "CVBC", "WLLC", "MRC"} % weighted
+                    numberOfScansSNR = unique(cellfun(@(c) size(c, 2), obj.SNR_input_dB));
+                otherwise
+                    numberOfScansSNR = 1;
+            end
             numberOfScansLocalPFA = unique(cellfun(@(c) size(c, 4), obj.localPFA));
             numberOfScans = length(obj.numberOfSensors);
             Tglobal = zeros(length(obj.globalPFA), numberOfScansSNR, length(obj.numberOfSensors), numberOfScansLocalPFA);
@@ -413,7 +424,7 @@ classdef detector < handle
                                     if ~strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
                                         pfa(PFAID, snrID, scanID, localPFAID) = F(gamma, pfaLocal);
                                     else
-                                        q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                        q = obj.globalRandomizationProbability(PFAID, 1, scanID, localPFAID);
                                         pfa(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pfaLocal) + q*F(gamma - 1, pfaLocal);
                                     end
                                 else
@@ -460,7 +471,11 @@ classdef detector < handle
                         end
                         lambda = Tlocal{scanID}(:, :, :, localPFAID);
                         for snrID = 1 : numberOfScansSNR
-                            gamma = Tglobal(PFAID, snrID, scanID, localPFAID);
+                            if size(Tglobal, 2) == 1
+                                gamma = Tglobal(PFAID, :, scanID, localPFAID);
+                            else
+                                gamma = Tglobal(PFAID, snrID, scanID, localPFAID);
+                            end
                             pdLocal = pDlocal{scanID}(:, snrID, 1, localPFAID);
                             w = weights{scanID}(:, snrID, 1, localPFAID);
                             F = obj.totalCDF(M, m, lambda, pdLocal, w, snr(:, snrID));
@@ -469,7 +484,7 @@ classdef detector < handle
                                     if ~strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
                                         ROC(PFAID, snrID, scanID, localPFAID) = F(gamma, pdLocal);
                                     else
-                                        q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                        q = obj.globalRandomizationProbability(PFAID, 1, scanID, localPFAID);
                                         ROC(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pdLocal) + q*F(gamma - 1, pdLocal);
                                     end
                                 else
@@ -482,6 +497,9 @@ classdef detector < handle
                                 end
                             else
                                 ROC(PFAID, snrID, scanID, localPFAID) = F(gamma);
+                            end
+                            if ~mod(snrID, 1000)
+                                fprintf('%d/%d\n', snrID, numberOfScansSNR);
                             end
                             % evaluating @(gamma - 1) is important for binary fusion with integer threshold
                         end
