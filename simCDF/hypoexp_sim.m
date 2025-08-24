@@ -5,6 +5,7 @@ clc; clear; close all;
 %%% parameters
 weights = [0.4, 0.4, 0.4, 0.5 0.5, 0.45];
 weights = [0.5, 0.5, 0.5];
+weights = ones(4, 1);
 nSamples = 100000;
 tValues = linspace(0, 15, 500);
 

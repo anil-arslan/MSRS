@@ -12,7 +12,7 @@ classdef fusionCenter < handle
             'globalPFA', 1e-6, ...
             'localPFA', 1, ...
             'numberOfTrainingCells', 20, ...
-            'numberOfGuardCells', 5);
+            'numberOfGuardCells', 3);
         configurationMonostatic (1, 1) struct = struct( ...
             'removeBoundaryDetectionDF', 1, ...
             'removeBoundaryDetectionMF', 0, ...
@@ -721,10 +721,10 @@ classdef fusionCenter < handle
 
             fig(1) = figure;
             img = imagesc(x1, x2, globalPDRealized);
-            ylim([-12 20]); xlim([-20 30]);
             colorbar; colormap('gray'); clim([0 1]);
             ax = gca; set(ax, 'Ydir', 'Normal');
-            % set(img, 'AlphaData', visibleZone);
+            set(img, 'AlphaData', visibleZone);
+            set(img, 'AlphaData', globalPDRealized ~= 0);
             delete(datatip(img, 2, 2));
             grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
@@ -768,7 +768,6 @@ classdef fusionCenter < handle
 
             fig(3) = figure;
             img = imagesc(x1, x2, numberOfUtilizedNodes);
-            ylim([-12 20]); xlim([-20 30]);
             colorbar; colormap('default');
             ax = gca; set(ax, 'Ydir', 'Normal');
             set(img, 'AlphaData', visibleZone & ~isnan(numberOfUtilizedNodes));
@@ -919,7 +918,7 @@ classdef fusionCenter < handle
             obj.interfaces.settargets(target( ...
                 "position", cellPositions, ...
                 "meanRCS_dbsm", options.meanRCS_dbsm));
-            obj.coverageSimulationReport.meanSNRsModel(obj.coverageSimulationReport.targetCellIDs) = 10*log10(sum(mean(obj.averageSNR_lin, 4), [1 2]));
+            % obj.coverageSimulationReport.meanSNRsModel(obj.coverageSimulationReport.targetCellIDs) = 10*log10(sum(mean(obj.averageSNR_lin, 4), [1 2]));
             obj.coverageSimulationReport.globalPDmodel(obj.coverageSimulationReport.targetCellIDs) = obj.configuration.detector.globalPD;
             function cleanupFunction(obj, originalTargets)
                 obj.interfaces.targets = originalTargets;
@@ -959,118 +958,111 @@ classdef fusionCenter < handle
                 meanSNRsRealized = meanSNRsModel;
             end
 
-            fig1 = figure;
-            img = imagesc(x1, x2, globalPDmodel); ylim([-12 20]); xlim([-20 30]);
-            colorbar; colormap('gray'); clim([0 1]);
-            ax = gca; set(ax, 'Ydir', 'Normal');
-            % set(img, 'AlphaData', visibleZone);
-            delete(datatip(img, 2, 2));
+            % fig1 = figure;
+            % img = imagesc(x1, x2, globalPDmodel);
+            % colorbar; colormap('gray'); clim([0 1]);
+            % ax = gca; set(ax, 'Ydir', 'Normal');
+            % % set(img, 'AlphaData', visibleZone);
+            % delete(datatip(img, 2, 2));
+            % % grid on; grid minor;
+            % grid off;
+            % xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            % hold off;
+            % img.DataTipTemplate.DataTipRows(1).Label = "x";
+            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            % img.DataTipTemplate.DataTipRows(2).Label = "y";
+            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            % img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            % img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
+            % hold off;
+            % if options.saveFigure
+            %     figureName = [char(options.header) '_ideal_PD'];
+            %     savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+            %     saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            % else
+            %     title('Modeled Probability of Detection'); drawnow;
+            % end
+
+            % fig2 = figure;
+            % img = imagesc(x1, x2, globalPDrealized); ylim([-12 20]); xlim([-20 30]);
+            % colorbar; colormap('gray'); clim([0 1]);
+            % ax = gca; set(ax, 'Ydir', 'Normal');
+            % % set(img, 'AlphaData', visibleZone);
+            % delete(datatip(img, 2, 2));
             % grid on; grid minor;
-            grid off;
-            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
-            img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
-            hold off;
-            if options.saveFigure
-                figureName = [char(options.header) '_ideal_PD'];
-                savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-                saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            else
-                title('Modeled Probability of Detection'); drawnow;
-            end
+            % xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            % hold off;
+            % img.DataTipTemplate.DataTipRows(1).Label = "x";
+            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            % img.DataTipTemplate.DataTipRows(2).Label = "y";
+            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            % img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            % img.DataTipTemplate.DataTipRows(3).Value = globalPDrealized;
+            % hold off;
+            % if options.saveFigure
+            %     figureName = [char(options.header) '_realized_PD'];
+            %     savefig(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+            %     saveas(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            % else
+            %     title('Realized Probability of Detection'); drawnow;
+            % end
 
-            fig2 = figure;
-            img = imagesc(x1, x2, globalPDrealized); ylim([-12 20]); xlim([-20 30]);
-            colorbar; colormap('gray'); clim([0 1]);
-            ax = gca; set(ax, 'Ydir', 'Normal');
+            % upperLim = max(max(meanSNRsModel(meanSNRsModel < 300), [], 'all'), max(meanSNRsRealized(meanSNRsRealized < 300), [], 'all'));
+            % lowerLim = min(min(meanSNRsModel(~isinf(meanSNRsModel)), [], 'all'), min(meanSNRsRealized(~isinf(meanSNRsRealized)), [], 'all'));
+            % 
+            % fig3 = figure;
+            % img = imagesc(x1, x2, meanSNRsModel); ylim([-12 20]); xlim([-20 30]); zlim([-20 inf]);
+            % colorbar; colormap('default'); clim([lowerLim, upperLim]); clim([-20, upperLim]);
+            % ax = gca; set(ax, 'Ydir', 'Normal');
             % set(img, 'AlphaData', visibleZone);
-            delete(datatip(img, 2, 2));
-            grid on; grid minor;
-            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
-            img.DataTipTemplate.DataTipRows(3).Value = globalPDrealized;
-            hold off;
-            if options.saveFigure
-                figureName = [char(options.header) '_realized_PD'];
-                savefig(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-                saveas(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            else
-                title('Realized Probability of Detection'); drawnow;
-            end
+            % delete(datatip(img, 2, 2));
+            % % grid on; grid minor;
+            % grid off;
+            % xlabel(xLabel); ylabel(yLabel);
+            % hold off;
+            % img.DataTipTemplate.DataTipRows(1).Label = "x";
+            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            % img.DataTipTemplate.DataTipRows(2).Label = "y";
+            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            % img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            % img.DataTipTemplate.DataTipRows(3).Value = meanSNRsModel;
+            % hold off;
+            % if options.saveFigure
+            %     figureName = [char(options.header) '_ideal_SNR'];
+            %     savefig(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+            %     saveas(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            % else
+            %     title('Modeled SNR averaged over trials'); drawnow;
+            % end
+            % 
+            % fig4 = figure;
+            % img = imagesc(x1, x2, meanSNRsRealized); ylim([-12 20]); xlim([-20 30]);
+            % colorbar; colormap('default'); clim([lowerLim, upperLim]);
+            % ax = gca; set(ax, 'Ydir', 'Normal');
+            % set(img, 'AlphaData', visibleZone);
+            % delete(datatip(img, 2, 2));
+            % grid off; grid on; grid minor;
+            % xlabel(xLabel); ylabel(yLabel);
+            % hold off;
+            % img.DataTipTemplate.DataTipRows(1).Label = "x";
+            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            % img.DataTipTemplate.DataTipRows(2).Label = "y";
+            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            % img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
+            % img.DataTipTemplate.DataTipRows(3).Value = meanSNRsRealized;
+            % hold off;
+            % if options.saveFigure
+            %     figureName = [char(options.header) '_realized_SNR'];
+            %     savefig(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+            %     saveas(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            % else
+            %     title('Realized SNR with straddle loss averaged over trials'); drawnow;
+            % end
 
-            upperLim = max(max(meanSNRsModel(meanSNRsModel < 300), [], 'all'), max(meanSNRsRealized(meanSNRsRealized < 300), [], 'all'));
-            lowerLim = min(min(meanSNRsModel(~isinf(meanSNRsModel)), [], 'all'), min(meanSNRsRealized(~isinf(meanSNRsRealized)), [], 'all'));
-
-            fig3 = figure;
-            img = imagesc(x1, x2, meanSNRsModel); ylim([-12 20]); xlim([-20 30]); zlim([-20 inf]);
-            colorbar; colormap('default'); clim([lowerLim, upperLim]); clim([-20, upperLim]);
-            ax = gca; set(ax, 'Ydir', 'Normal');
-            set(img, 'AlphaData', visibleZone);
-            delete(datatip(img, 2, 2));
-            % grid on; grid minor;
-            grid off;
-            xlabel(xLabel); ylabel(yLabel);
-            hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            img.DataTipTemplate.DataTipRows(3).Value = meanSNRsModel;
-            hold off;
-            if options.saveFigure
-                figureName = [char(options.header) '_ideal_SNR'];
-                savefig(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-                saveas(fig3, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            else
-                title('Modeled SNR averaged over trials'); drawnow;
-            end
-
-            fig4 = figure;
-            img = imagesc(x1, x2, meanSNRsRealized); ylim([-12 20]); xlim([-20 30]);
-            colorbar; colormap('default'); clim([lowerLim, upperLim]);
-            ax = gca; set(ax, 'Ydir', 'Normal');
-            set(img, 'AlphaData', visibleZone);
-            delete(datatip(img, 2, 2));
+            % fig5 = figure;
+            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2);
             grid off; grid on; grid minor;
-            xlabel(xLabel); ylabel(yLabel);
-            hold off;
-            img.DataTipTemplate.DataTipRows(1).Label = "x";
-            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            img.DataTipTemplate.DataTipRows(2).Label = "y";
-            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            img.DataTipTemplate.DataTipRows(3).Label = "mean SNR";
-            img.DataTipTemplate.DataTipRows(3).Value = meanSNRsRealized;
-            hold off;
-            if options.saveFigure
-                figureName = [char(options.header) '_realized_SNR'];
-                savefig(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-                saveas(fig4, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            else
-                title('Realized SNR with straddle loss averaged over trials'); drawnow;
-            end
-
-            fig5 = figure;
-            switch obj.network.networkMode
-                case 'monoStatic'
-                    edgeColor = 'k';
-                case 'multiStatic'
-                    edgeColor = 'r';
-            end
-            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2, 'ShowText', 'on', 'EdgeColor', edgeColor); ylim([-12 20]); xlim([-20 30]);
-            grid on; grid minor;
             xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            hold off;
             if options.saveFigure
                 figureName = [char(options.header) '_contour_PD'];
                 savefig(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
@@ -1118,8 +1110,10 @@ classdef fusionCenter < handle
                     end
                     t = (-L + 1 : N)*Ts*1e6;
                     if ~isscalar(options.receivingNodeIDs)
+                        s(1 : L,  ceil(end/2), txID) = nan;
                         plot(t, 20*log10(abs(s(:, ceil(end/2), txID))));
                     else
+                        s(1 : L, :, txID) = nan;
                         plot(t, 20*log10(abs(s(:, :, txID))));
                     end
                     hold on;
@@ -1132,12 +1126,12 @@ classdef fusionCenter < handle
                 end
             end
             grid off; grid on; grid minor;
-            xlabel('time (\mus)'); ylabel('power (dB)');
-            title('filtered signal');
-            if ~isscalar(options.receivingNodeIDs)
-                leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
-                title(leg, 'RX ID');
-            end
+            xlabel('time delay (\mus)'); ylabel('Per Sample SNR (dB)');
+            % title('filtered signal');
+            % if ~isscalar(options.receivingNodeIDs)
+            %     leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
+            %     title(leg, 'RX ID');
+            % end
             drawnow; hold off;
         end
 
@@ -1281,6 +1275,13 @@ classdef fusionCenter < handle
             config = obj.configuration;
             z = nan(prod(obj.gridSize), 1);
             z(~obj.blindZone) = 10*log10(obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower);
+            % z(~obj.blindZone) = obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower; % binary
+
+            % z(z < obj.configuration.detector.globalThreshold) = nan;
+
+            z(z < 10*log10(obj.configuration.detector.globalThreshold)) = nan;
+            nnz(~isnan(z))
+
             switch obj.network.networkMode
                 case "multiStatic"
                     pos = obj.detectionReport(options.trialID).estimatedPositions;
@@ -1332,7 +1333,8 @@ classdef fusionCenter < handle
                         case "image"
                             hold on;
                             img = imagesc(obj.gridPoints{1}/1e3, obj.gridPoints{2}/1e3, Y);
-                            % set(img, 'AlphaData', ~isinf(Y) & ~isnan(Y));
+                            set(img, 'AlphaData', ~isinf(Y) & ~isnan(Y));
+                            % set(img, 'AlphaData', Y ~= 0 & ~isnan(Y)); % binary
                             delete(datatip(img, 2, 2));
                             img.DataTipTemplate.DataTipRows(1).Label = "x";
                             img.DataTipTemplate.DataTipRows(1).Value = x1;
@@ -1340,14 +1342,14 @@ classdef fusionCenter < handle
                             img.DataTipTemplate.DataTipRows(2).Value = x2;
                             img.DataTipTemplate.DataTipRows(3).Label = "power";
                             img.DataTipTemplate.DataTipRows(3).Value = Y;
-                            plot(posRX(1, :), posRX(2, :), 'xm', 'LineWidth', 1, 'MarkerSize', 10);
-                            plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 1, 'MarkerSize', 10);
-                            estimations = pos(dims, :)/1e3;
-                            plot(estimations(1, :), estimations(2, :), 'oy', 'LineWidth', 2);
-                            if ~isempty(obj.interfaces.targets)
-                                x = obj.interfaces.targets.position(dims, :)/1e3;
-                                plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
-                            end
+                            % plot(posRX(1, :), posRX(2, :), 'xm', 'LineWidth', 1, 'MarkerSize', 10);
+                            % plot(posTX(1, :), posTX(2, :), '+r', 'LineWidth', 1, 'MarkerSize', 10);
+                            % estimations = pos(dims, :)/1e3;
+                            % plot(estimations(1, :), estimations(2, :), 'om', 'LineWidth', 1);
+                            % if ~isempty(obj.interfaces.targets)
+                            %     x = obj.interfaces.targets.position(dims, :)/1e3;
+                            %     plot(x(1, :), x(2, :), '+k', 'LineWidth', 2);
+                            % end
                     end
                     colorbar; clim([0 inf]); colormap('winter'); view(0, 90);
                     xlim(obj.network.boundaryListened(1, :)/1e3); ylim(obj.network.boundaryListened(2, :)/1e3);

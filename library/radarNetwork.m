@@ -276,6 +276,9 @@ classdef radarNetwork < handle
                 lims(:, 1) = lims(:, 1) - offset;
                 lims(:, 2) = lims(:, 2) + offset;
             end
+            lims(1, :) = [-50e3 50e3];
+            lims(2, :) = [-40e3 50e3];
+            lims(3, :) = [0 0];
         end
 
         function res = get.defaultGridResolution(obj)
@@ -555,6 +558,7 @@ classdef radarNetwork < handle
             minMag = -30; % dB
             N = unique(obj.pulseWidthSample);
             nfft = 2.^(nextpow2(N) + 1);
+            nfft = N;
             bins = -nfft/2 : nfft/2 - 1;
             delays = -N + 1 : N - 1;
             if ~strcmpi(options.domain, "ambiguity")
@@ -621,10 +625,10 @@ classdef radarNetwork < handle
                 case "ambiguity"
                     title('ambiguity functions');
                 case "frequency"
-                    title('waveforms in time');
+                    % title('frequency responses of waveform');
                     xlabel('frequency bins');
                 case "time"
-                    title('frequency responses of waveform');
+                    title('waveforms in time');
                     xlabel('time samples');
             end
             grid off; grid on; grid minor;
@@ -644,9 +648,9 @@ classdef radarNetwork < handle
                     case "imaginary"
                         ylabel('imaginary part');
                 end
-                [idTx, idRx] = meshgrid(1 : obj.numberOfActiveTransmittingNodes, 1 : obj.numberOfActiveReceivingNodes);
-                leg = legend(num2str([idTx(:) idRx(:)]), 'Location', 'best');
-                title(leg, 'TX | RX ID');
+                % [idTx, idRx] = meshgrid(1 : obj.numberOfActiveTransmittingNodes, 1 : obj.numberOfActiveReceivingNodes);
+                % leg = legend(num2str([idTx(:) idRx(:)]), 'Location', 'best');
+                % title(leg, 'TX | RX ID');
             else
                 m.FaceColor = 'flat';
                 xlabel('doppler bins'); ylabel('delay samples');
@@ -695,7 +699,7 @@ classdef radarNetwork < handle
             grid off; grid on; grid minor;
             % title('radar network configuration');
             xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
-            legend('RX', 'TX', 'Location', 'best');
+            % legend('RX', 'TX', 'Location', 'best');
             ax = gca; lims = [ax.XLim; ax.YLim; ax.ZLim];
             lims = [min(lims(:)), max(lims(:))];
             xlim(lims); ylim(lims); zlim(lims);

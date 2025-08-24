@@ -44,7 +44,7 @@ classdef transmittingNode < handle & dynamicprops
     properties (SetAccess = private, GetAccess = public)
         modulationType (1, 1) string {mustBeMember(modulationType, ["unmodulated", "linearFrequencyModulated"])} = "unmodulated"
         taperTypeFastTime (1, 1) string {mustBeMember(taperTypeFastTime, ["rectwin", "hann", "hamming"])} = "rectwin"
-        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "taylorwin"
+        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "rectwin"
     end
 
     properties (Dependent)
@@ -171,7 +171,7 @@ classdef transmittingNode < handle & dynamicprops
             u = @(t) double(t > 0); % unit step function
             switch obj.transmissionType
                 case "pulsed"
-                    r = @(t, Ts) u(t + obj.pulseWidth - Ts/2) - u(t - Ts/2);
+                    r = @(t, Ts) (u(t + obj.pulseWidth - Ts/2) - u(t - Ts/2))/sqrt(obj.pulseWidth/Ts);
                 case "continuous"
                     r = @(t, Ts) u(-t);
             end
@@ -191,6 +191,7 @@ classdef transmittingNode < handle & dynamicprops
                     case "decreasing"
                         sig(finiteInstants) = r(t, Ts).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*t.^2 + 1j*2*pi*obj.frequencyOffset.*t);
                     case "symmetric"
+                        sig(finiteInstants) = r(t, Ts).*exp(-1j*pi*(obj.bandWidth/obj.pulseWidth)*(t + obj.pulseWidth/2).^2);
                 end
             end
         end

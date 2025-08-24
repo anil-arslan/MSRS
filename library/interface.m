@@ -356,7 +356,7 @@ classdef interface < handle
                 Pr = -inf(obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
             else
                 powerGains = 10*log10([obj.network.activeTransmittingNodes.peakTransmitGain].') + ...
-                    10*log10([obj.network.activeTransmittingNodes.peakPower_W].') + permute(obj.targets.RCS_dbms, [1 3 2]) + ...
+                    10*log10([obj.network.activeTransmittingNodes.peakPower_W]./[obj.network.activeTransmittingNodes.pulseWidth]).' + permute(obj.targets.RCS_dbms, [1 3 2]) + ...
                     20*log10(obj.carrierWavelengthRealized);
                 powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
                 Pr = powerGains - powerLosses;
@@ -370,7 +370,7 @@ classdef interface < handle
                 Pr = -inf(obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes);
             else
                 powerGains = 20*log10(abs(obj.transmittedBeam)) + ...
-                    10*log10([obj.network.activeTransmittingNodes.peakPower_W].') + permute(obj.targets.RCS_dbms, [1 3 2]) + ...
+                    10*log10([obj.network.activeTransmittingNodes.peakPower_W]).' + permute(obj.targets.RCS_dbms, [1 3 2]) + ...
                     20*log10(obj.carrierWavelengthRealized);
                 powerLosses = [obj.network.activeReceivingNodes.systemLoss_dB] + 30*log10(4*pi) + 20*log10(obj.distanceRX.*obj.distanceTX);
                 Pr = powerGains - powerLosses;
@@ -458,6 +458,7 @@ classdef interface < handle
             end
             waveforms = waveforms.*modulatorDoppler.*modulatorSpatial;
             waveforms(isinf(tau)) = 0;
+            waveforms = waveforms.*sqrt([obj.network.activeTransmittingNodes.pulseWidth]./[obj.network.activeReceivingNodes.samplingPeriod]);
 
             switch obj.configuration.fractionalDelay
                 case 'sinc-based'
@@ -465,9 +466,9 @@ classdef interface < handle
                     notAlignedSampling = notAlignedSampling - round(notAlignedSampling);
         
                     % Sinc-based fractional delay filter
-                    N = 10;  % Number of neighboring samples to consider
-                    n = (-N : N).';  % Filter taps
-                    h = sinc(n - notAlignedSampling);  % Fractional delay filter
+                    N = unique([obj.network.pulseWidthSample]);  % Number of neighboring samples to consider
+                    n = (0 : N - 1).';  % Filter taps
+                    h = sinc(n - notAlignedSampling - ceil(N/2));  % Fractional delay filter
         
                     % Create sampled signal and apply delay filter
                     for waveformID = 1 : prod(size(waveforms, [2 3 4 5]))
@@ -522,7 +523,7 @@ classdef interface < handle
             else
                 Pr = ones(obj.numberOfTransmittingNodes, obj.numberOfTargets, obj.numberOfTrialsParallel, obj.numberOfReceivingNodes);
             end
-            a = obj.receiveSteeringVector;
+            % a = obj.receiveSteeringVector;
             s = obj.waveformReceivedFromScatterers;
             for rxID = 1 : obj.numberOfReceivingNodes
                 alpha = permute(targetComplexFluctuation(:, rxID, :, :), [1 3 4 2]);
@@ -535,9 +536,10 @@ classdef interface < handle
                     n = 0;
                 end
                 y{rxID} = zeros(Ns, 1, obj.numberOfTargets, obj.numberOfTransmittingNodes, M, obj.numberOfTrialsParallel);
-                for txID = 1 : obj.numberOfTransmittingNodes
-                    y{rxID}(:, :, :, txID, :, :) = permute(Aw(:, :, :, txID, :), [1 2 3 4 6 5]).*permute(a{txID, rxID}, [6 4 2 5 1 3]) + n;
-                end
+                % for txID = 1 : obj.numberOfTransmittingNodes
+                %     y{rxID}(:, :, :, txID, :, :) = permute(Aw(:, :, :, txID, :), [1 2 3 4 6 5]).*permute(a{txID, rxID}, [6 4 2 5 1 3]) + n;
+                % end
+                y{rxID} = permute(Aw, [1 2 3 4 6 5]) + n;
             end
         end
 
@@ -733,12 +735,12 @@ classdef interface < handle
             % (3 x Nscan x Ntx x Nrx x Nt x Nmcp matrix)
             t = -180 : .1 : 180;
             % aForward = obj.bistaticRange + [obj.network.activeReceivingNodes.samplingPeriod]*obj.speedOfLight;
-            aForward = obj.bistaticRange + obj.speedOfLight./[obj.network.transmittingNodes.bandWidth];
+            aForward = obj.bistaticRange + obj.speedOfLight./[obj.network.transmittingNodes.bandWidth]/2;
             bForward = sqrt(aForward.^2 - obj.distanceBaseline.^2);
             vForward = [shiftdim(aForward, -2).*cosd(t)/2; shiftdim(bForward, -2).*sind(t)/2];
             vForward = pagemtimes(obj.ellipseRotationMatrix, vForward) + permute(obj.centerBaseline(1 : 2, :, :), [1 4 2 3]);
             % aBackward = obj.bistaticRange - [obj.network.activeReceivingNodes.samplingPeriod]*obj.speedOfLight;
-            aBackward = obj.bistaticRange - obj.speedOfLight./[obj.network.transmittingNodes.bandWidth];
+            aBackward = obj.bistaticRange - obj.speedOfLight./[obj.network.transmittingNodes.bandWidth]/2;
             bBackward = sqrt(aBackward.^2 - obj.distanceBaseline.^2);
             vBackward = [shiftdim(aBackward, -2).*cosd(t)/2; shiftdim(bBackward, -2).*sind(t)/2];
             vBackward = pagemtimes(obj.ellipseRotationMatrix, vBackward) + permute(obj.centerBaseline(1 : 2, :, :), [1 4 2 3]);
@@ -1190,7 +1192,10 @@ classdef interface < handle
                         case "resolution"
                             xPlot = [x(:, :, txID, rxID, :, :, 1), fliplr(x(:, :, txID, rxID, :, :, 2))];
                             yPlot = [y(:, :, txID, rxID, :, :, 1), fliplr(y(:, :, txID, rxID, :, :, 2))];
-                            patch(xPlot, yPlot, 'r', 'FaceAlpha', 0.2);
+                            % patch(xPlot, yPlot, 'r', 'FaceAlpha', 0.2);
+                            plot(x(:, :, txID, rxID, :, 1), y(:, :, txID, rxID, :, 1), 'k', 'LineWidth', 2); hold on;
+                            plot(x(:, :, txID, rxID, :, 2), y(:, :, txID, rxID, :, 2), 'k', 'LineWidth', 2);
+                            % patch(xPlot, yPlot, 'y');
                     end
                 end
             end
@@ -1199,10 +1204,10 @@ classdef interface < handle
                     plot(xTarget, yTarget, 'ok', 'LineWidth', 2, 'MarkerSize', 20);
                     % title('iso bistatic range ellipse of the target');
                 case "resolution"
-                    plot(xTarget, yTarget, 'k*', 'LineWidth', 2, 'MarkerSize', 10);
+                    % plot(xTarget, yTarget, 'k+', 'LineWidth', 2, 'MarkerSize', 10);
                     % title('resolution ellipses of the target');
             end
-            xlabel('x (km)'); ylabel('y (km)'); zlabel('z (km)');
+            xlabel('x-pos (km)'); ylabel('y-pos (km)'); zlabel('z-pos (km)');
         end
 
         function visualizereceivedsignals(obj, options)
@@ -1227,15 +1232,17 @@ classdef interface < handle
                     y = 20*log10(abs(s{rxID}(:, ceil(end/2), options.trialID)));
                 end
                 y = y - obj.network.activeReceivingNodes(rxID).noisePowerPerSample_dB;
-                plot(t, y); hold on;
+                plot(t, y, 'LineWidth', 2); hold on;
             end
             grid off; grid on; grid minor;
-            xlabel('time (\mus)'); ylabel('SNR (dB)');
-            title('received signal');
-            if ~isscalar(options.receivingNodeIDs)
-                leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
-                title(leg, 'RX ID');
-            end
+            xlabel('time delay (\mus)'); ylabel('Per Sample SNR (dB)');
+            xline(20, 'LineStyle', '--'); 
+            xline(29.5, 'LineStyle', '--');
+            % title('received signal');
+            % if ~isscalar(options.receivingNodeIDs)
+            %     leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
+            %     title(leg, 'RX ID');
+            % end
             hold off; drawnow;
         end
 
@@ -1264,12 +1271,14 @@ classdef interface < handle
                 plot(t, y); hold on;
             end
             grid off; grid on; grid minor;
-            xlabel('time (\mus)'); ylabel('SNR (dB)');
-            title('received and beamformed signal');
-            if ~isscalar(options.receivingNodeIDs)
-                leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
-                title(leg, 'RX ID');
-            end
+            xlabel('time delay (\mus)'); ylabel('Per Sample SNR (dB)');
+            xline(120, 'LineStyle', '--'); 
+            xline(129.5, 'LineStyle', '--');
+            % title('received and beamformed signal');
+            % if ~isscalar(options.receivingNodeIDs)
+            %     leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
+            %     title(leg, 'RX ID');
+            % end
             hold off; drawnow;
         end
 
@@ -1317,9 +1326,11 @@ classdef interface < handle
             x = reshape(obj.targets.position(axID1, :), L1, L2)/1e3;
             y = reshape(obj.targets.position(axID2, :), L1, L2)/1e3;
             if any(strcmpi(options.curves, "delay")) || any(strcmpi(options.curves, "all"))
-                fig = figure; contourf(x, y, reshape(-obj.timeDelay(options.transmittingNodeID, options.receivingNodeID, :, :)*1e6, L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g usec");
-                hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
-                plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
+                fig = figure; contourf(x, y, reshape(-obj.timeDelay(options.transmittingNodeID, options.receivingNodeID, :, :)*1e6, L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g us");
+                hold on; plot(posRX(axID1, :), posRX(axID2, :), '.b', 'LineWidth', 2, 'MarkerSize', 5);
+                plot(posTX(axID1, :), posTX(axID2, :), '.r', 'LineWidth', 2, 'MarkerSize', 5);
+                text(posRX(axID1, :), posRX(axID2, :), 'RX', 'Color', 'b', 'VerticalAlignment', 'bottom');
+                text(posTX(axID1, :), posTX(axID2, :), 0, 'TX', 'Color', 'r', 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'right');
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
                 if options.saveFigure
@@ -1331,9 +1342,9 @@ classdef interface < handle
                 end
             end
             if any(strcmpi(options.curves, "power")) || any(strcmpi(options.curves, "all"))
-                fig = figure; contourf(x, y, reshape(obj.averageSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
-                hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
-                plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
+                fig = figure; contourf(x, y, obj.network.beamformingGain_dB + reshape(obj.averageSNR_dB(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g dB");
+                % hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
+                % plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
                 if options.saveFigure
@@ -1346,8 +1357,8 @@ classdef interface < handle
             end
             if any(strcmpi(options.curves, "doppler")) || any(strcmpi(options.curves, "all"))
                 fig = figure; contourf(x, y, reshape(obj.dopplerShift(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), options.numberOfCurves, "ShowText", true, "LabelFormat", "%3.3g Hz");
-                hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
-                plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
+                % hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
+                % plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
                 if options.saveFigure
@@ -1359,9 +1370,9 @@ classdef interface < handle
                 end
             end
             if any(strcmpi(options.curves, "bistaticAngle")) || any(strcmpi(options.curves, "all"))
-                fig = figure; contourf(x, y, reshape(obj.bistaticAngle(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 180, options.numberOfCurves + 3), "ShowText", true, "LabelFormat", "%3.3g");
-                hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
-                plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
+                fig = figure; contourf(x, y, reshape(obj.bistaticAngle(options.transmittingNodeID, options.receivingNodeID, :), L1, L2), linspace(0, 180, options.numberOfCurves + 3), "ShowText", true, "LabelFormat", "%3.3g°");
+                % hold on; plot(posRX(axID1, :), posRX(axID2, :), 'ob', 'LineWidth', 2, 'MarkerSize', 10);
+                % plot(posTX(axID1, :), posTX(axID2, :), 'or', 'LineWidth', 2, 'MarkerSize', 10);
                 xlabel(firstAxisLabel); ylabel(secondAxisLabel);
                 xlim tight; ylim tight; zlim tight; view(2);
                 if options.saveFigure

@@ -8,13 +8,13 @@ classdef receivingNode < handle
         position (3, 1) double = zeros(3, 1)
         systemLoss_dB (1, 1) double {mustBeNonnegative} = 0 % dB
         noiseFigure_dB (1, 1) double {mustBeNonnegative} = 0 % dB
-        temperature (1, 1) double {mustBeNonnegative} = 300 % Kelvin
+        temperature (1, 1) double {mustBeNonnegative} = 290 % Kelvin
     end
 
     properties (SetAccess = private, GetAccess = public)
         beamCentersElevation (1, :) double {mustBeInRange(beamCentersElevation, -90, 90)} = 0
         beamCentersAzimuth (1, :) double {mustBeInRange(beamCentersAzimuth, -180, 180)} = 0
-        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "taylorwin"
+        taperTypeSpatial (1, 1) string {mustBeMember(taperTypeSpatial, ["rectwin", "hann", "hamming", "taylorwin"])} = "rectwin"
     end
 
     properties (Dependent)

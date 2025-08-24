@@ -73,7 +73,8 @@ classdef detector < handle
 
     %%% Local detection parameters
 
-    properties (SetAccess = private, GetAccess = public)
+    % properties (SetAccess = private, GetAccess = public)
+    properties (SetAccess = public, GetAccess = public)
         localPFA (1, :) cell = {0.1} % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
         localPFAsimulation (1, :) cell = {} % [1 x M] cell of [M x 1 x 1 x Nlocal] matrices
     end
@@ -498,10 +499,13 @@ classdef detector < handle
                             else
                                 ROC(PFAID, snrID, scanID, localPFAID) = F(gamma);
                             end
-                            if ~mod(snrID, 1000)
+                            if ~mod(snrID, 10000)
                                 fprintf('%d/%d\n', snrID, numberOfScansSNR);
                             end
                             % evaluating @(gamma - 1) is important for binary fusion with integer threshold
+                        end
+                        if ~mod(localPFAID, 10)
+                            fprintf('%d/%d\n', localPFAID, numberOfScansLocalPFA);
                         end
                     end
                 end

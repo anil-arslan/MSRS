@@ -9,6 +9,7 @@ set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 algorithms = ["fixedLocalPFA", "fixedGlobal|LocalPFA"];
 signalModels = ["decorrelatedExponential", "deterministic"];
+signalModels = "decorrelatedExponential";
 pfaLocal = logspace(0, -6, 1001);
 
 dtc = detector( ...
@@ -45,10 +46,10 @@ for signalModel = signalModels
                 lineStyle = '-';
         end
         if modelID == 1
-            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'b', 'LineStyle', lineStyle); hold on;
+            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
             figure(fig2); loglog(pfaLocal, pfa, 'LineWidth', 2, 'Color', color); hold on;
         else
-            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'r', 'LineStyle', lineStyle); hold on;
+            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
         end
     end
 end
@@ -61,7 +62,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-legendStr = ["fixed thresholding - Rayleigh", "randomized thresholding - Rayleigh", "fixed thresholding - non-fluctuating", "randomized thresholding - non-fluctuating"];
+legendStr = ["fixed thresholding - Rayleigh", "randomized thresholding - Rayleigh"];
 legend(legendStr, 'Location', 'best');
 
 figure(fig2);
@@ -76,9 +77,9 @@ if kayit
     figureName = 'binary_combining_pd_threshold_effect';
     savefig(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
-    figureName = 'binary_combining_pfa_threshold_effect';
-    savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
-    saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
+    % figureName = 'binary_combining_pfa_threshold_effect';
+    % savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
+    % saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
 
 %% Unweighted binary combining
@@ -120,6 +121,7 @@ set(groot, "defaultFigurePosition", [680 458 560 420]);
 pfaLocal = logspace(0, -6, 1001);
 algorithms = ["BC", "CVBC"];
 signalModels = ["decorrelatedExponential", "deterministic"];
+signalModels = "decorrelatedExponential";
 
 fig = figure;
 modelID = 0;
@@ -131,7 +133,7 @@ for signalModel = signalModels
         dtc = detector( ...
             "globalPFA", 1e-6, ...
             "numberOfSensors", 9, ...
-            "SNR_input_dB", 8, ...
+            "SNR_input_dB", 2, ...
             "localPFA", pfaLocal ...
             );
         dtc.setalgorithm( ...
@@ -146,15 +148,13 @@ for signalModel = signalModels
         pd = squeeze(dtc.globalPD);
         switch algorithmID
             case 1
+                color = 'r';
                 lineStyle = '-.';
             case 2
+                color = 'b';
                 lineStyle = '-';
         end
-        if modelID == 1
-            figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'b', 'LineStyle', lineStyle); hold on;
-        else
-            figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'r', 'LineStyle', lineStyle); hold on;
-        end
+        figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
     end
 end
 figure(fig);
@@ -162,7 +162,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-leg = legend(["unweighted BC - Rayleigh", "weighted BC- Rayleigh", "unweighted BC - non-fluctuating", "weighted BC- non-fluctuating"], 'Location', 'best');
+leg = legend(["unweighted BC - Rayleigh", "weighted BC- Rayleigh"], 'Location', 'best');
 
 if kayit
     figureName = 'binary_combining_weighted';
