@@ -48,7 +48,9 @@ classdef fusionCenter < handle
 
     properties (Dependent)
         averageSNR_dB double % dB power, % (Ntx x Nrx x Nt x Nmcp matrix)
+        averageSNR_dB_w_Straddle % dB power, % (Ntx x Nrx x Nt x Nmcp matrix)
         averageSNR_lin dobule % linear scale power, % (Ntx x Nrx x Nt x Nmcp matrix)
+        averageSNR_lin_w_Straddle dobule % linear scale power, % (Ntx x Nrx x Nt x Nmcp matrix)
         noisePowersPerSample_W double {mustBePositive} % linear scale noise power
         dictionaryComplexWeights double % (Ntx x Nrx x Ni matrix)
     end
@@ -139,16 +141,26 @@ classdef fusionCenter < handle
             SNRin = 10.^(.1*obj.averageSNR_dB);
         end
 
+        function SNRin = get.averageSNR_lin_w_Straddle(obj)
+            % (Ntx x Nrx x Nt matrix)
+            SNRin = 10.^(.1*obj.averageSNR_dB_w_Straddle);
+        end
+
         function SNRin = get.averageSNR_dB(obj)
             % (Ntx x Nrx x Nt x Nmcp matrix)
             SNRin = obj.interfaces.averageSNR_dB + obj.network.processingGain_dB.';
+        end
+
+        function SNRin = get.averageSNR_dB_w_Straddle(obj)
+            % (Ntx x Nrx x Nt matrix)
+            SNRin = obj.interfaces.averageSNR_dB_w_Straddle + obj.network.processingGain_dB.';
         end
 
         function cfg = get.configuration(obj)
             cfg = obj.configuration;
             cfg.detector = detector( ...
                 "globalPFA", cfg.globalPFA, ...
-                "SNR_input_dB", reshape(obj.averageSNR_dB(:, :, :, 1), obj.network.numberOfActiveBistaticPairs, []), ...
+                "SNR_input_dB", reshape(obj.averageSNR_dB_w_Straddle(:, :, :, 1), obj.network.numberOfActiveBistaticPairs, []), ...
                 "numberOfSensors", obj.network.numberOfActiveBistaticPairs, ...
                 "localPFA", cfg.localPFA);
             switch obj.interfaces.spatialCoherency
@@ -266,7 +278,7 @@ classdef fusionCenter < handle
             % has the information of relative phases as well
             % pos = hypothesizedPositions(:, (all(abs(squeeze(signals{1}(:, :, :, :, 1))) == 0)));
             % figure; plot(pos(1, :), pos(2, :), '.');
-            matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
+            matchFilters = flip(obj.network.matchFilter); % L x Nrx x Ntx matrix
             switch obj.network.networkMode
                 case 'multiStatic'
                     % (Ni x Nrx x Ntx matrix)
@@ -376,7 +388,7 @@ classdef fusionCenter < handle
             L = obj.network.pulseWidthSample;
             Ns = size([obj.network.activeReceivingNodes.samplingInstants], 1);
             Nmf = Ns + L - 1;
-            matchFilters = obj.network.matchFilter; % L x Nrx x Ntx matrix
+            matchFilters = flip(obj.network.matchFilter); % L x Nrx x Ntx matrix
             NTC = config.numberOfTrainingCells; % CA-CFAR
             NGC = config.numberOfGuardCells; % CA-CFAR
             signalBeamformed = obj.interfaces.signalBeamformed;
@@ -633,7 +645,7 @@ classdef fusionCenter < handle
                 'meanSNRsModel', [], ...
                 'numberOfUtilizedNodes', []);
             obj.detectionSimulationReport.globalPDrealized = zeros(prod(obj.gridSize), 1);
-            obj.detectionSimulationReport.meanSNRsModel = 10*log10(sum(mean(obj.averageSNR_lin, 4), [1 2]));
+            obj.detectionSimulationReport.meanSNRsModel = 10*log10(sum(mean(obj.averageSNR_lin_w_Straddle, 4), [1 2]));
             obj.detectionSimulationReport.globalPDmodeled = config.detector.globalPD;
             obj.detectionSimulationReport.meanSNRsRealized = zeros(prod(obj.gridSize), 1);
             obj.detectionSimulationReport.numberOfUtilizedNodes = zeros(prod(obj.gridSize), 1);
@@ -841,8 +853,8 @@ classdef fusionCenter < handle
                 obj.interfaces.settargets(target( ...
                     "position", targetPositions(:, targetID), ...
                     "meanRCS_dbsm", options.meanRCS_dbsm));
-                obj.coverageSimulationReport.meanSNRsModel(targetCellID) = 10*log10(sum(mean(obj.averageSNR_lin, 4), [1 2]));
-                currentDetector.setSNR(10*log10(mean(obj.averageSNR_lin, 4)).');
+                obj.coverageSimulationReport.meanSNRsModel(targetCellID) = 10*log10(sum(obj.averageSNR_lin_w_Straddle, [1 2]));
+                currentDetector.setSNR(10*log10(obj.averageSNR_lin_w_Straddle).');
                 obj.coverageSimulationReport.globalPDmodel(targetCellID) = currentDetector.globalPD;
                 for mcID = 1 : mc.numberOfTrials
                     if ~options.onCellCenters
@@ -918,7 +930,7 @@ classdef fusionCenter < handle
             obj.interfaces.settargets(target( ...
                 "position", cellPositions, ...
                 "meanRCS_dbsm", options.meanRCS_dbsm));
-            % obj.coverageSimulationReport.meanSNRsModel(obj.coverageSimulationReport.targetCellIDs) = 10*log10(sum(mean(obj.averageSNR_lin, 4), [1 2]));
+            % obj.coverageSimulationReport.meanSNRsModel(obj.coverageSimulationReport.targetCellIDs) = 10*log10(sum(mean(obj.averageSNR_lin_w_Straddle, 4), [1 2]));
             obj.coverageSimulationReport.globalPDmodel(obj.coverageSimulationReport.targetCellIDs) = obj.configuration.detector.globalPD;
             function cleanupFunction(obj, originalTargets)
                 obj.interfaces.targets = originalTargets;
@@ -958,30 +970,30 @@ classdef fusionCenter < handle
                 meanSNRsRealized = meanSNRsModel;
             end
 
-            % fig1 = figure;
-            % img = imagesc(x1, x2, globalPDmodel);
-            % colorbar; colormap('gray'); clim([0 1]);
-            % ax = gca; set(ax, 'Ydir', 'Normal');
-            % % set(img, 'AlphaData', visibleZone);
-            % delete(datatip(img, 2, 2));
-            % % grid on; grid minor;
-            % grid off;
-            % xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            % hold off;
-            % img.DataTipTemplate.DataTipRows(1).Label = "x";
-            % img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
-            % img.DataTipTemplate.DataTipRows(2).Label = "y";
-            % img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
-            % img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
-            % img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
-            % hold off;
-            % if options.saveFigure
-            %     figureName = [char(options.header) '_ideal_PD'];
-            %     savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-            %     saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            % else
-            %     title('Modeled Probability of Detection'); drawnow;
-            % end
+            fig1 = figure;
+            img = imagesc(x1, x2, globalPDmodel);
+            colorbar; colormap('gray'); clim([0 1]);
+            ax = gca; set(ax, 'Ydir', 'Normal');
+            % set(img, 'AlphaData', visibleZone);
+            delete(datatip(img, 2, 2));
+            % grid on; grid minor;
+            grid off;
+            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            hold off;
+            img.DataTipTemplate.DataTipRows(1).Label = "x";
+            img.DataTipTemplate.DataTipRows(1).Value = gridScan.x;
+            img.DataTipTemplate.DataTipRows(2).Label = "y";
+            img.DataTipTemplate.DataTipRows(2).Value = gridScan.y;
+            img.DataTipTemplate.DataTipRows(3).Label = "globalPD";
+            img.DataTipTemplate.DataTipRows(3).Value = globalPDmodel;
+            hold off;
+            if options.saveFigure
+                figureName = [char(options.header) '_ideal_PD'];
+                savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+                saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            else
+                title('Modeled Probability of Detection'); drawnow;
+            end
 
             % fig2 = figure;
             % img = imagesc(x1, x2, globalPDrealized); ylim([-12 20]); xlim([-20 30]);
@@ -1060,16 +1072,16 @@ classdef fusionCenter < handle
             % end
 
             % fig5 = figure;
-            contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2);
-            grid off; grid on; grid minor;
-            xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-            if options.saveFigure
-                figureName = [char(options.header) '_contour_PD'];
-                savefig(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
-                saveas(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
-            else
-                title('Probability of detection'); drawnow;
-            end
+            % contour(x1, x2, globalPDrealized, [-1 options.contourLevelDetection], 'LineWidth', 2);
+            % grid off; grid on; grid minor;
+            % xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+            % if options.saveFigure
+            %     figureName = [char(options.header) '_contour_PD'];
+            %     savefig(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+            %     saveas(fig5, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+            % else
+            %     title('Probability of detection'); drawnow;
+            % end
         end
         
         %%% visualization methods
@@ -1108,12 +1120,12 @@ classdef fusionCenter < handle
                             L = obj.network.pulseWidthSample(rxID, txID) - 1;
                             N = obj.network.activeReceivingNodes(rxID).numberOfSamplesPerCPI;
                     end
-                    t = (-L + 1 : N)*Ts*1e6;
+                    t = (1 : N + L)*Ts*1e6;
                     if ~isscalar(options.receivingNodeIDs)
-                        s(1 : L,  ceil(end/2), txID) = nan;
+                        s(end - L + 1 : end, ceil(end/2), txID) = nan;
                         plot(t, 20*log10(abs(s(:, ceil(end/2), txID))));
                     else
-                        s(1 : L, :, txID) = nan;
+                        s(end - L + 1 : end, :, txID) = nan;
                         plot(t, 20*log10(abs(s(:, :, txID))));
                     end
                     hold on;
@@ -1274,13 +1286,13 @@ classdef fusionCenter < handle
             end
             config = obj.configuration;
             z = nan(prod(obj.gridSize), 1);
-            z(~obj.blindZone) = 10*log10(obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower);
-            % z(~obj.blindZone) = obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower; % binary
+            % z(~obj.blindZone) = 10*log10(obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower);
+            z(~obj.blindZone) = obj.detectionReport(options.monoStaticNetworkRXID, options.trialID).integratedPower; % binary
 
             % z(z < obj.configuration.detector.globalThreshold) = nan;
 
-            z(z < 10*log10(obj.configuration.detector.globalThreshold)) = nan;
-            nnz(~isnan(z))
+            % z(z < 10*log10(obj.configuration.detector.globalThreshold)) = nan;
+            % nnz(~isnan(z))
 
             switch obj.network.networkMode
                 case "multiStatic"
@@ -1333,8 +1345,8 @@ classdef fusionCenter < handle
                         case "image"
                             hold on;
                             img = imagesc(obj.gridPoints{1}/1e3, obj.gridPoints{2}/1e3, Y);
-                            set(img, 'AlphaData', ~isinf(Y) & ~isnan(Y));
-                            % set(img, 'AlphaData', Y ~= 0 & ~isnan(Y)); % binary
+                            % set(img, 'AlphaData', ~isinf(Y) & ~isnan(Y));
+                            set(img, 'AlphaData', Y ~= 0 & ~isnan(Y)); % binary
                             delete(datatip(img, 2, 2));
                             img.DataTipTemplate.DataTipRows(1).Label = "x";
                             img.DataTipTemplate.DataTipRows(1).Value = x1;

@@ -75,6 +75,18 @@ figureName = 'rx_without_straddle';
 savefig(gcf, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
 saveas(gcf, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
+mf = network.matchFilter;
+nonIntDelay = linspace(-0.5, 0.5, 1001).';
+sig = transmitters.waveform((1 - network.pulseWidthSample : 0)*receivers.samplingPeriod + nonIntDelay.*receivers.samplingPeriod, receivers.samplingPeriod);
+y = sig*conj(mf);
+figure; plot(nonIntDelay, 20*log10(abs(y)));
+grid off; grid on; grid minor;
+ylabel('Straddle Loss (dB)'); xlabel('Non integer delay');
+figureName = 'autocorr_straddle';
+savefig(gcf, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(gcf, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+
+
 fc.setdictionary;
 rng(0);
 fc.applyspatialprocessing("saveSpectrum", 1, "doesPrint", true);

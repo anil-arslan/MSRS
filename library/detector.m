@@ -319,22 +319,22 @@ classdef detector < handle
                                         % - 0.5 prevents boundary problems
                                         switch obj.binaryDetectionRule
                                             case "notSpecified"
-                                                pfaGlobalK = zeros(1, M + 1);
-                                                for K = 0 : M
-                                                    pfaGlobalK(K + 1) = F(K, pfaLocal);
+                                                pfaGlobalK = zeros(1, M + 2);
+                                                for K = -1 : M
+                                                    pfaGlobalK(K + 2) = F(K, pfaLocal);
                                                 end
                                                 switch obj.binaryDetectionPFAtype
                                                     case "fixedGlobalPFA"
                                                         % since global PFA is fixed with local PFA already
                                                         [~, threshold] = min(abs(pfaGlobalK - pfaGlobal));
-                                                        threshold = threshold - 0.5;
+                                                        threshold = threshold - 1.5;
                                                     case {"fixedLocalPFA", "fixedGlobal|LocalPFA"}
-                                                        threshold = find(pfaGlobalK < pfaGlobal, 1, 'first') - 0.5;
+                                                        threshold = find(pfaGlobalK < pfaGlobal, 1, 'first') - 1.5;
                                                         if strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
                                                             % T has less global PFA than desired
                                                             % T - 1 has higher global PFA than desired
-                                                            pfaGlobalLower = pfaGlobalK(ceil(threshold));
-                                                            pfaGlobalUpper = pfaGlobalK(max(ceil(threshold - 1), 1));
+                                                            pfaGlobalLower = pfaGlobalK(ceil(threshold + 1));
+                                                            pfaGlobalUpper = pfaGlobalK(max(ceil(threshold), 1));
                                                             if pfaGlobalUpper ~= pfaGlobalLower
                                                                 obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID) = (pfaGlobal - pfaGlobalLower)/(pfaGlobalUpper - pfaGlobalLower);
                                                             else

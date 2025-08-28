@@ -168,7 +168,7 @@ classdef transmittingNode < handle & dynamicprops
         end
 
         function s = get.waveform(obj)
-            u = @(t) double(t > 0); % unit step function
+            u = @(t) double(t >= 0); % unit step function
             switch obj.transmissionType
                 case "pulsed"
                     r = @(t, Ts) (u(t + obj.pulseWidth - Ts/2) - u(t - Ts/2))/sqrt(obj.pulseWidth/Ts);

@@ -51,12 +51,12 @@ end
 
 %% Centralized Different SNR, SW 2 PD vs SNR
 clc; clear; % close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
 algorithms = ["SLC", "WSLC"];
-snrs = -5 : .02 : 15;
+snrs = -5 : .02 : 20;
 M = [9 5];
 
 fig1 = figure;
@@ -95,7 +95,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Mean of Average SNRs per Receiving Node (dB)');
 ylabel('Global Probability of Detection');
-legend(["unweighted SLC - M = 9", "weighted SLC - M = 9", "unweighted SLC - M = 5", "weighted SLC - M = 5"], 'Location', 'best');
+legend(["SLC - M = 9", "WSLC - M = 9", "SLC - M = 5", "WSLC - M = 5"], 'Location', 'best');
 
 if kayit
     figureName = 'analysis_centralized_different_snr_iid';
@@ -116,7 +116,7 @@ end
 
 %% Decentralized Equal SNR, SW 2 PD vs PFAlocal
 clc; clear; % close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 colors = rgb2hex([ ...
     0.0000    0.4470    0.7410 % blue
@@ -128,9 +128,9 @@ colors = rgb2hex([ ...
     0.6350    0.0780    0.1840]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -6, 1001);
+pfaLocal = logspace(0, -8, 4001);
 algorithms = ["BC", "SLC"];
-M = 1 : 5;
+M = [1 2 3 4 5 7 9];
 
 fig1 = figure;
 algorithmID = 0;
@@ -140,7 +140,7 @@ for algorithm = algorithms
         dtc = detector( ...
             "globalPFA", globalPFA, ...
             "numberOfSensors", M(sensorID), ...
-            "SNR_input_dB", 12, ...
+            "SNR_input_dB", 8, ...
             "localPFA", pfaLocal ...
             );
         dtc.setalgorithm( ...
@@ -157,8 +157,8 @@ for algorithm = algorithms
                 lineStyle = '-.';
         end
         pd = squeeze(dtc.globalPD);
-        figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'LineStyle', lineStyle, 'color', colors(sensorID)); hold on;
-        figure(40); semilogx(pfaLocal, squeeze(dtc.globalRandomizationProbability), 'LineWidth', 2, 'LineStyle', lineStyle, 'color', colors(sensorID)); hold on;
+        figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'LineStyle', lineStyle); hold on;
+        % figure(40); semilogx(pfaLocal, squeeze(dtc.globalRandomizationProbability), 'LineWidth', 2, 'LineStyle', lineStyle, 'color', colors(sensorID)); hold on;
     end
 end
 
@@ -179,11 +179,11 @@ end
 
 %% Decentralized Different SNR, SW 2 PD vs PFAlocal
 clc; clear; % close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -12, 101);
+pfaLocal = logspace(0, -8, 1001);
 algorithms = ["SLC", "BC", "WSLC", "CVBC"];
 M = 9;
 snr = 8;
@@ -215,7 +215,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-legend(["SLC", "BC", "weighted SLC", "weighted BC"], 'Location', 'best');
+legend(["SLC", "BC", "WSLC", "WBC"], 'Location', 'best');
 
 if kayit
     figureName = 'analysis_decentralized_different_snr_iid';

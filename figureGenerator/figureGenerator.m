@@ -10,7 +10,7 @@ set(groot, "defaultFigurePosition", [680 458 560 420]);
 algorithms = ["fixedLocalPFA", "fixedGlobal|LocalPFA"];
 signalModels = ["decorrelatedExponential", "deterministic"];
 signalModels = "decorrelatedExponential";
-pfaLocal = logspace(0, -6, 1001);
+pfaLocal = logspace(0, -8, 1001);
 
 dtc = detector( ...
     "globalPFA", 1e-6, ...
@@ -62,14 +62,14 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-legendStr = ["fixed thresholding - Rayleigh", "randomized thresholding - Rayleigh"];
+legendStr = ["fixed thresholding", "randomized thresholding"];
 legend(legendStr, 'Location', 'best');
 
 figure(fig2);
 grid on; grid minor;
 xlabel('Local Probability of False Alarm');
-yyaxis left; ylabel('Global Probability of False Alarm'); ylim([3.6e-11 3.6e-6])
-yyaxis right; ylabel('Global Threshold');
+yyaxis left; ylabel('Global Probability of False Alarm'); ylim([1e-14 1e-5])
+yyaxis right; ylabel('Effective Global Threshold'); ylim([-0.5 9.5]);
 legendStr = ["fixed thresholding", "randomized thresholding", "effective threshold"];
 legend(legendStr, 'Location', 'best');
 
@@ -77,21 +77,20 @@ if kayit
     figureName = 'binary_combining_pd_threshold_effect';
     savefig(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
-    % figureName = 'binary_combining_pfa_threshold_effect';
-    % savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
-    % saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
+    figureName = 'binary_combining_pfa_threshold_effect';
+    savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
+    saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
 
 %% Unweighted binary combining
 clc; clear; close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 dtc = detector( ...
     "globalPFA", 1e-6, ...
-    "numberOfSensors", [1 2 3 5 7 9 11], ...
-    "SNR_input_dB", 17, ...
+    "numberOfSensors", [1 2 3 4 5 7 9], ...
     "SNR_input_dB", 8, ...
-    "localPFA", logspace(0, -6, 1001) ...
+    "localPFA", logspace(0, -8, 10001) ...
     );
 dtc.setalgorithm( ...
     "binaryDetectionRule", "notSpecified", ...
@@ -118,7 +117,7 @@ clc; clear; close all;
 kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
-pfaLocal = logspace(0, -6, 1001);
+pfaLocal = logspace(0, -8, 1001);
 algorithms = ["BC", "CVBC"];
 signalModels = ["decorrelatedExponential", "deterministic"];
 signalModels = "decorrelatedExponential";
@@ -133,7 +132,7 @@ for signalModel = signalModels
         dtc = detector( ...
             "globalPFA", 1e-6, ...
             "numberOfSensors", 9, ...
-            "SNR_input_dB", 2, ...
+            "SNR_input_dB", 8, ...
             "localPFA", pfaLocal ...
             );
         dtc.setalgorithm( ...
@@ -162,7 +161,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-leg = legend(["unweighted BC - Rayleigh", "weighted BC- Rayleigh"], 'Location', 'best');
+leg = legend(["BC", "WBC"], 'Location', 'best');
 
 if kayit
     figureName = 'binary_combining_weighted';
@@ -200,18 +199,18 @@ end
 
 %% Unweighted square Law Combining
 clc; clear; close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 dtc = detector( ...
     "globalPFA", 1e-6, ...
-    "numberOfSensors", [1 2 3 5 7 9 11], ...
+    "numberOfSensors", [1 2 3 4 5 7 9], ...
     "SNR_input_dB", 8, ...
-    "localPFA", logspace(0, -6, 101) ...
+    "localPFA", logspace(0, -8, 10001) ...
     );
 dtc.setalgorithm( ...
     "signalAmplitudeModel", "decorrelatedExponential", ...
     "signalPhaseModel", "decorrelatedUniform", ...
-    "globalFusionRule", "WSLC" ...
+    "globalFusionRule", "SLC" ...
     );
 fig = dtc.visualize( ...
     "x_axis", "localPFA", ...
@@ -228,7 +227,7 @@ clc; clear; close all;
 kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
-pfaLocal = logspace(0, -6, 101);
+pfaLocal = logspace(0, -8, 201);
 algorithms = ["SLC", "WSLC"];
 snrs = [2 8];
 
@@ -271,7 +270,7 @@ grid on; grid minor;
 ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
-leg = legend(["unweighted SLC - 2 dB", "weighted SLC - 2 dB", "unweighted SLC - 8 dB", "weighted SLC - 8 dB"], 'Location', 'best');
+leg = legend(["SLC - 2 dB", "WSLC - 2 dB", "SLC - 8 dB", "WSLC - 8 dB"], 'Location', 'best');
 
 if kayit
     figureName = 'square_law_combining_weighted';

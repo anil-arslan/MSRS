@@ -50,6 +50,7 @@ classdef interface < handle
         receivedPowerFromScatterers_dBW double % dB Watt (Ntx x Nrx x Nt x Nmcp matrix)
         receivedPowerFromTransmittingNodes_dBW double % dB Watt (Ntx x Nrx matrix)
         averageSNR_dB double % dB (Ntx x Nrx x Nt x Nmcp matrix)
+        averageSNR_dB_w_Straddle double % dB (Ntx x Nrx x Nt x Nmcp matrix)
         
         receivedEnergyFromScatterersPerPulse_dBJoule % dB Joule (Ntx x Nrx x Nt x Nmcp matrix)
         receivedEnergyFromScatterersPerSample_dBJoule % dB Joule (Ntx x Nrx x Nt x Nmcp matrix)
@@ -406,6 +407,23 @@ classdef interface < handle
             SNRin = obj.receivedPowerFromScatterers_dBW - [obj.network.activeReceivingNodes.noisePowerPerSample_dB];
         end
 
+        function SNRin = get.averageSNR_dB_w_Straddle(obj)
+            % (Ntx x Nrx x Nt x Nmcp matrix)
+            mf = obj.network.matchFilter;
+            tau = [obj.network.activeReceivingNodes.samplingInstants] - permute(obj.timeDelay, [5 2 3 1 4]); % Ns x Nrx x Nt x Ntx x Nmcp matrix
+
+            nonIntDelay = tau(1, :, :, :, :).*[obj.network.activeReceivingNodes.samplingFrequency];
+            nonIntDelay = nonIntDelay - round(nonIntDelay);
+
+            straddleLoss_dB = zeros(obj.numberOfTransmittingNodes, obj.numberOfReceivingNodes, obj.numberOfTargets);
+            for rxID = 1 : obj.numberOfReceivingNodes
+                Ts = obj.network.activeReceivingNodes(rxID).samplingPeriod; % 1 x Nrx matrix
+                sig = obj.network.activeTransmittingNodes.waveform((1 - obj.network.pulseWidthSample(rxID) : 0).*Ts + nonIntDelay(rxID).*Ts, Ts);
+                straddleLoss_dB = 20*log10(abs(sig*conj(mf(:, rxID))));
+            end
+            SNRin = obj.averageSNR_dB(:, :, :, 1) + straddleLoss_dB;
+        end
+
         function Er = get.receivedEnergyFromScatterersPerSample_dBJoule(obj)
             % (Ntx x Nrx x Nt x Nmcp matrix)
             Er = obj.receivedPowerFromScatterers_dBW./[obj.network.activeReceivingNodes.samplingFrequency];
@@ -454,7 +472,7 @@ classdef interface < handle
             % across time it is very small.
             waveforms = zeros(size(tau)); % Ns x Nrx x Nt x Ntx matrix
             for txID = 1 : obj.numberOfTransmittingNodes
-                waveforms(:, :, :, txID, :) = obj.network.activeTransmittingNodes(txID).waveform(-tau(:, :, :, txID, :), unique(Ts));
+                waveforms(:, :, :, txID, :) = obj.network.activeTransmittingNodes(txID).waveform(tau(:, :, :, txID, :), unique(Ts));
             end
             waveforms = waveforms.*modulatorDoppler.*modulatorSpatial;
             waveforms(isinf(tau)) = 0;
@@ -1236,8 +1254,8 @@ classdef interface < handle
             end
             grid off; grid on; grid minor;
             xlabel('time delay (\mus)'); ylabel('Per Sample SNR (dB)');
-            xline(20, 'LineStyle', '--'); 
-            xline(29.5, 'LineStyle', '--');
+            xline(120, 'LineStyle', '--'); 
+            xline(111, 'LineStyle', '--');
             % title('received signal');
             % if ~isscalar(options.receivingNodeIDs)
             %     leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');
@@ -1273,7 +1291,7 @@ classdef interface < handle
             grid off; grid on; grid minor;
             xlabel('time delay (\mus)'); ylabel('Per Sample SNR (dB)');
             xline(120, 'LineStyle', '--'); 
-            xline(129.5, 'LineStyle', '--');
+            xline(111, 'LineStyle', '--');
             % title('received and beamformed signal');
             % if ~isscalar(options.receivingNodeIDs)
             %     leg = legend(num2str(options.receivingNodeIDs.'), 'Location', 'best');

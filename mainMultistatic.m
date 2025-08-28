@@ -160,8 +160,8 @@ targets = target( ...
 int.settargets(targets)
 fc.configure( ...
     "seed", 0, ...
-    "globalIntegrationRule", "SLC", ...
-    "localPFA", 1e-3);
+    "globalIntegrationRule", "BC", ...
+    "localPFA", 1e-2);
 fc.applyspatialprocessing("saveSpectrum", 1, "doesPrint", true);
 
 % Visualization %%%
@@ -173,7 +173,8 @@ trialID = 1; % coh kontrol edilmeli
 fig2 = fc.visualizeintegratedsignals( ...
     "trialID", trialID, ...
     "plotMode", "image");
-% figureName = 'scenario_1_response';
+% clim([0, 20]);
+% figureName = 'scenario_1_response_localPFA_BC';
 % savefig(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
 % saveas(fig2, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
@@ -217,15 +218,16 @@ fc.analyticalcoverage("meanRCS_dbsm", 10*log10(1));
 close all;
 fc.visualizecoveragesimulation( ...
     "contourLevelDetection", 0.85, ...
-    "saveFigure", 0, "header", 'scenario_1_coverage_BC');
-fc.visualizecoveragesimulation( ...
-    "contourLevelDetection", 0.7, ...
-    "saveFigure", 0, "header", 'scenario_1_coverage_BC');
+    "saveFigure", 1, "header", 'scenario_1_coverage_BC');
+% fc.visualizecoveragesimulation( ...
+%     "contourLevelDetection", 0.7, ...
+%     "saveFigure", 0, "header", 'scenario_1_coverage_BC');
 
 %% analytical coverage BC
 
-fc.configure("globalIntegrationRule", "BC");
-localPFA = logspace(-3, -6, 100);
+fc.configure("globalIntegrationRule", "SLC");
+localPFA = logspace(0, -8, 100);
+localPFA = 1;
 
 gridScan = fc.gridPointsMesh;
 cellPositions = reshape(permute(cat(4, gridScan.x, gridScan.y, gridScan.z), [4 1 2 3]), [3 prod(fc.gridSize)]);
@@ -249,37 +251,106 @@ x2 = fc.gridPoints{2}/1e3;
 globalPDmodel = reshape(globalPDmodel, [fc.gridSize([2 1]), length(localPFA)]);
 
 %%
+colors = rgb2hex([ ...
+    0.0000    0.4470    0.7410 % blue
+    0.8500    0.3250    0.0980 % orange
+    0.9290    0.6940    0.1250 % yellow
+    0.4940    0.1840    0.5560 % magenta
+    0.4660    0.6740    0.1880 % green
+    0.3010    0.7450    0.9330 % cyan
+    0.6350    0.0780    0.1840]);
+load('globalPDmodel_BC.mat', 'globalPDmodel');
+globalPDmodel_BC = globalPDmodel;
+load('globalPDmodel_SLC_localPFA.mat', 'globalPDmodel');
+globalPDmodel_SLC_localPFA = globalPDmodel;
+load('globalPDmodel_SLC.mat', 'globalPDmodel');
+globalPDmodel_SLC = globalPDmodel;
+
 fig85 = figure(1985); hold on;
-for i = 1 : length(localPFA)
-    contour(x1, x2, globalPDmodel(:, :, i), [-1 0.85], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
-    grid off; grid on; grid minor;
-    xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-end
+% for i = 1 : length(localPFA)
+%     contour(x1, x2, globalPDmodel(:, :, i), [-1 0.85], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
+% end
+contour(x1, x2, globalPDmodel_SLC, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(1));
+contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(2));
+contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(3));
+contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(4));
+contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(5));
+grid off; grid on; grid minor;
+xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+legend("centralized SLC", "distributed SLC", "BC-\lambda^{local} = " + scinot(localPFA(86)), "BC-\lambda^{local} = " + scinot(localPFA(47)), "BC-\lambda^{local} = " + scinot(localPFA(13)), "Location", "best");
+figureName = 'scenario_1_coverage_contour_85';
+savefig(fig85, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig85, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+
 
 fig70 = figure(1970); hold on;
-for i = 1 : length(localPFA)
-    contour(x1, x2, globalPDmodel(:, :, i), [-1 0.70], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
-    grid off; grid on; grid minor;
-    xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
-end
+% for i = 1 : length(localPFA)
+%     contour(x1, x2, globalPDmodel(:, :, i), [-1 0.70], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
+% end
+contour(x1, x2, globalPDmodel_SLC, [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(1));
+contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.75], 'LineWidth', 2, 'EdgeColor', colors(2));
+contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(3));
+contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(4));
+contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(5));
+grid off; grid on; grid minor;
+xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
+legend("centralized SLC", "distributed SLC", "BC-\lambda^{local} = " + scinot(localPFA(86)), "BC-\lambda^{local} = " + scinot(localPFA(47)), "BC-\lambda^{local} = " + scinot(localPFA(13)), "Location", "best");
+figureName = 'scenario_1_coverage_contour_70';
+savefig(fig70, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig70, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+
+fig1 = figure;
+img = imagesc(x1, x2, globalPDmodel_BC(:, :, 86));
+colorbar; colormap('gray'); clim([0 1]);
+ax = gca; set(ax, 'Ydir', 'Normal');
+% set(img, 'AlphaData', visibleZone);
+xlabel(xLabel); ylabel(yLabel);
+figureName = 'scenario_1_coverage_BC_max';
+savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
+
+fig1 = figure;
+img = imagesc(x1, x2, globalPDmodel_BC(:, :, 47));
+colorbar; colormap('gray'); clim([0 1]);
+ax = gca; set(ax, 'Ydir', 'Normal');
+% set(img, 'AlphaData', visibleZone);
+xlabel(xLabel); ylabel(yLabel);
+figureName = 'scenario_1_coverage_BC_submax';
+savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
 
+fig1 = figure;
+img = imagesc(x1, x2, globalPDmodel_SLC_localPFA);
+colorbar; colormap('gray'); clim([0 1]);
+ax = gca; set(ax, 'Ydir', 'Normal');
+% set(img, 'AlphaData', visibleZone);
+xlabel(xLabel); ylabel(yLabel);
+figureName = 'scenario_1_coverage_SLC_local_PFA';
+savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
-
-
-
+fig1 = figure;
+img = imagesc(x1, x2, globalPDmodel_SLC);
+colorbar; colormap('gray'); clim([0 1]);
+ax = gca; set(ax, 'Ydir', 'Normal');
+% set(img, 'AlphaData', visibleZone);
+xlabel(xLabel); ylabel(yLabel);
+figureName = 'scenario_1_coverage_SLC';
+savefig(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
+saveas(fig1, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
 %% simulated coverage
 
-clc;
-fc.configure( ...
-    "seed", 0, ...
-    'localPFA', 1e-3, ... 0.1
-    "numberOfTrials", 1, ...
-    "numberOfTrialsParallel", 1);
-
-fc.simulatecoverage("meanRCS_dbsm", 10*log10(5), "onCellCenters", 1, "neighbourOffset", 100);
-close all;
-fc.visualizecoveragesimulation( ...
-    "contourLevelDetection", 0.85, ...
-    "saveFigure", 0, "header", 'scenario_1');
+% clc;
+% fc.configure( ...
+%     "seed", 0, ...
+%     'localPFA', 1e-3, ... 0.1
+%     "numberOfTrials", 1, ...
+%     "numberOfTrialsParallel", 1);
+% 
+% fc.simulatecoverage("meanRCS_dbsm", 10*log10(5), "onCellCenters", 1, "neighbourOffset", 100);
+% close all;
+% fc.visualizecoveragesimulation( ...
+%     "contourLevelDetection", 0.85, ...
+%     "saveFigure", 0, "header", 'scenario_1');
