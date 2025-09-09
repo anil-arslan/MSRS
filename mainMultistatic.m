@@ -270,11 +270,11 @@ fig85 = figure(1985); hold on;
 % for i = 1 : length(localPFA)
 %     contour(x1, x2, globalPDmodel(:, :, i), [-1 0.85], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
 % end
-contour(x1, x2, globalPDmodel_SLC, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(1));
-contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(2));
-contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(3));
-contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(4));
-contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(5));
+contour(x1, x2, globalPDmodel_SLC, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(1), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(2), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(3), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(4), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.85], 'LineWidth', 2, 'EdgeColor', colors(5), 'LineStyle', ':');
 grid off; grid on; grid minor;
 xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
 legend("centralized SLC", "distributed SLC", "BC-\lambda^{local} = " + scinot(localPFA(86)), "BC-\lambda^{local} = " + scinot(localPFA(47)), "BC-\lambda^{local} = " + scinot(localPFA(13)), "Location", "best");
@@ -287,11 +287,11 @@ fig70 = figure(1970); hold on;
 % for i = 1 : length(localPFA)
 %     contour(x1, x2, globalPDmodel(:, :, i), [-1 0.70], 'LineWidth', 2, 'EdgeColor', [0.93 0.69 0.13]);
 % end
-contour(x1, x2, globalPDmodel_SLC, [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(1));
-contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.75], 'LineWidth', 2, 'EdgeColor', colors(2));
-contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(3));
-contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(4));
-contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(5));
+contour(x1, x2, globalPDmodel_SLC, [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(1), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_SLC_localPFA, [-1 0.75], 'LineWidth', 2, 'EdgeColor', colors(2), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 86), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(3), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 47), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(4), 'LineStyle', ':');
+contour(x1, x2, globalPDmodel_BC(:, :, 13), [-1 0.70], 'LineWidth', 2, 'EdgeColor', colors(5), 'LineStyle', ':');
 grid off; grid on; grid minor;
 xlabel(xLabel); ylabel(yLabel); zlabel('p_D');
 legend("centralized SLC", "distributed SLC", "BC-\lambda^{local} = " + scinot(localPFA(86)), "BC-\lambda^{local} = " + scinot(localPFA(47)), "BC-\lambda^{local} = " + scinot(localPFA(13)), "Location", "best");
@@ -299,6 +299,8 @@ figureName = 'scenario_1_coverage_contour_70';
 savefig(fig70, ['C:\GitRepo\MSRS\figuresSim\' figureName '.fig']);
 saveas(fig70, ['C:\GitRepo\MSRS\figuresSim\' figureName '.eps'], 'epsc');
 
+
+%%
 fig1 = figure;
 img = imagesc(x1, x2, globalPDmodel_BC(:, :, 86));
 colorbar; colormap('gray'); clim([0 1]);

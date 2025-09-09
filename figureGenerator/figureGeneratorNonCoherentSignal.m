@@ -57,48 +57,42 @@ set(groot, "defaultFigurePosition", [680 458 560 420]);
 globalPFA = 1e-6;
 algorithms = ["SLC", "WSLC"];
 snrs = -5 : .02 : 20;
-M = [9 5];
+M = 9;
 
 fig1 = figure;
-for m = M
-    algorithmID = 0;
-    for algorithm = algorithms
-        algorithmID = algorithmID + 1;
-        dtc = detector( ...
-            "globalPFA", globalPFA, ...
-            "numberOfSensors", m, ...
-            "SNR_input_dB", snrs, ...
-            "localPFA", 1 ...
-            );
-        rng(1975); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 20);
-        dtc.setalgorithm( ...
-            "signalPhaseModel", "decorrelatedUniform", ...
-            "signalAmplitudeModel", "decorrelatedExponential", ...
-            "globalFusionRule", algorithm ...
-            );
-        pd = squeeze(dtc.globalPD);
-        switch algorithmID
-            case 1
-                lineStyle = '-.';
-            case 2
-                lineStyle = '-';
-        end
-        switch m
-            case 9
-                plot(snrs, pd, 'b', 'LineWidth', 2, 'LineStyle', lineStyle); hold on;
-            case 5
-                plot(snrs, pd, 'r', 'LineWidth', 2, 'LineStyle', lineStyle); hold on;
-        end
+algorithmID = 3;
+for algorithm = algorithms
+    algorithmID = algorithmID - 1;
+    dtc = detector( ...
+        "globalPFA", globalPFA, ...
+        "numberOfSensors", M, ...
+        "SNR_input_dB", snrs, ...
+        "localPFA", 1 ...
+        );
+    % rng(1975); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 20);
+    rng(1976); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 10);
+    dtc.setalgorithm( ...
+        "signalPhaseModel", "decorrelatedUniform", ...
+        "signalAmplitudeModel", "decorrelatedExponential", ...
+        "globalFusionRule", algorithm ...
+        );
+    pd = squeeze(dtc.globalPD);
+    switch algorithmID
+        case 1
+            lineStyle = '-.';
+        case 2
+            lineStyle = '-';
     end
+    plot(snrs, pd, 'LineWidth', 2, 'LineStyle', lineStyle); hold on;
 end
 grid on; grid minor;
 ylim([0, 1]);
 xlabel('Mean of Average SNRs per Receiving Node (dB)');
 ylabel('Global Probability of Detection');
-legend(["SLC - M = 9", "WSLC - M = 9", "SLC - M = 5", "WSLC - M = 5"], 'Location', 'best');
+legend(["SLC", "WSLC"], 'Location', 'best');
 
 if kayit
-    figureName = 'analysis_centralized_different_snr_iid';
+    figureName = 'analysis_centralized_different_snr_iid_2';
     savefig(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
@@ -183,7 +177,7 @@ kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
-pfaLocal = logspace(0, -8, 1001);
+pfaLocal = logspace(0, -8, 201);
 algorithms = ["SLC", "BC", "WSLC", "CVBC"];
 M = 9;
 snr = 8;
@@ -200,6 +194,7 @@ for m = M
             "localPFA", pfaLocal ...
             );
         rng(1975); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 20);
+        rng(1976); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 10);
         dtc.setalgorithm( ...
             "binaryDetectionRule", "notSpecified", ...
             "binaryDetectionConstraint", "fixedGlobal|LocalPFA", ...
@@ -208,7 +203,9 @@ for m = M
             "globalFusionRule", algorithm ...
             );
         pd = squeeze(dtc.globalPD);
+        T{algorithmID} = squeeze(dtc.globalThreshold);
         semilogx(pfaLocal, pd, 'LineWidth', 2); hold on;
+        w{algorithmID} = squeeze(dtc.fusionWeights{1});
     end
 end
 grid on; grid minor;
@@ -217,8 +214,23 @@ xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
 legend(["SLC", "BC", "WSLC", "WBC"], 'Location', 'best');
 
+% figure; semilogx(pfaLocal(2 : end), w{4}(:, 2 : end).', 'LineWidth', 2);
+% grid on; grid minor;
+% xlim tight;
+% xlabel('Local Probability of False Alarm');
+% ylabel('Weights');
+% legendStr = num2str((1 : M).');
+% leg = legend(legendStr, 'Location', 'best');
+% title(leg, 'm');
+
+% w{4}(:, 61).'
+% w{4}(:, 31).'
+
+% figure; plot(w{3}(2 : end, 1));
+
+% figure; plot(T{4});
 if kayit
-    figureName = 'analysis_decentralized_different_snr_iid';
+    figureName = 'analysis_decentralized_different_snr_iid_2';
     savefig(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end

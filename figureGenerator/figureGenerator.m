@@ -4,7 +4,7 @@ addpath(genpath('C:\GitRepo\MSRS/figureGenerator'));
 
 %% Binary combining discrete threshold effect
 clc; clear; close all;
-kayit = 1;
+kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 algorithms = ["fixedLocalPFA", "fixedGlobal|LocalPFA"];
@@ -46,10 +46,10 @@ for signalModel = signalModels
                 lineStyle = '-';
         end
         if modelID == 1
-            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
+            figure(fig1); plot(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
             figure(fig2); loglog(pfaLocal, pfa, 'LineWidth', 2, 'Color', color); hold on;
         else
-            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
+            figure(fig1); plot(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
         end
     end
 end
@@ -60,6 +60,7 @@ ax.YAxis(2).Color = 'm';
 figure(fig1);
 grid on; grid minor;
 ylim([0, 1]);
+xlim([0, 0.3]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
 legendStr = ["fixed thresholding", "randomized thresholding"];
@@ -74,12 +75,12 @@ legendStr = ["fixed thresholding", "randomized thresholding", "effective thresho
 legend(legendStr, 'Location', 'best');
 
 if kayit
-    figureName = 'binary_combining_pd_threshold_effect';
+    figureName = 'binary_combining_pd_threshold_effect_2';
     savefig(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
-    figureName = 'binary_combining_pfa_threshold_effect';
-    savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
-    saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
+    % figureName = 'binary_combining_pfa_threshold_effect';
+    % savefig(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
+    % saveas(fig2, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
 
 %% Unweighted binary combining
@@ -117,7 +118,7 @@ clc; clear; close all;
 kayit = 0;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
-pfaLocal = logspace(0, -8, 1001);
+pfaLocal = logspace(0, -8, 81);
 algorithms = ["BC", "CVBC"];
 signalModels = ["decorrelatedExponential", "deterministic"];
 signalModels = "decorrelatedExponential";
@@ -126,9 +127,9 @@ fig = figure;
 modelID = 0;
 for signalModel = signalModels
     modelID = modelID + 1;
-    algorithmID = 0;
+    algorithmID = 3;
     for algorithm = algorithms
-        algorithmID = algorithmID + 1;
+        algorithmID = algorithmID - 1;
         dtc = detector( ...
             "globalPFA", 1e-6, ...
             "numberOfSensors", 9, ...
@@ -142,18 +143,18 @@ for signalModel = signalModels
             "signalPhaseModel", "decorrelatedUniform", ...
             "globalFusionRule", algorithm ...
             );
+        % rng(1976); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 10);
         rng(1975); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 20);
         snrr = dtc.SNR_input_dB{1};
         pd = squeeze(dtc.globalPD);
         switch algorithmID
             case 1
-                color = 'r';
                 lineStyle = '-.';
             case 2
-                color = 'b';
                 lineStyle = '-';
         end
-        figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
+        figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'LineStyle', lineStyle); hold on;
+        w{algorithmID} = squeeze(dtc.fusionWeights{1});
     end
 end
 figure(fig);
@@ -164,7 +165,7 @@ ylabel('Global Probability of Detection');
 leg = legend(["BC", "WBC"], 'Location', 'best');
 
 if kayit
-    figureName = 'binary_combining_weighted';
+    figureName = 'binary_combining_weighted_2';
     savefig(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
@@ -224,8 +225,16 @@ end
 
 %% Weighted square Law Combining
 clc; clear; close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
+colors = rgb2hex([ ...
+    0.0000    0.4470    0.7410 % blue
+    0.8500    0.3250    0.0980 % orange
+    0.4940    0.1840    0.5560 % magenta
+    0.9290    0.6940    0.1250 % yellow
+    0.4660    0.6740    0.1880 % green
+    0.3010    0.7450    0.9330 % cyan
+    0.6350    0.0780    0.1840]);
 
 pfaLocal = logspace(0, -8, 201);
 algorithms = ["SLC", "WSLC"];
@@ -235,9 +244,9 @@ fig = figure;
 snrID = 0;
 for snr = snrs
     snrID = snrID + 1;
-    algorithmID = 0;
+    algorithmID = 3;
     for algorithm = algorithms
-        algorithmID = algorithmID + 1;
+        algorithmID = algorithmID - 1;
         dtc = detector( ...
             "globalPFA", 1e-6, ...
             "numberOfSensors", 9, ...
@@ -250,18 +259,16 @@ for snr = snrs
             "globalFusionRule", algorithm ...
             );
         rng(1975); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 20);
+        % rng(1976); dtc.randomSNRwithFixedAverage("rangeSNR_dB", 10);
         snrr = dtc.SNR_input_dB{1};
         pd = squeeze(dtc.globalPD);
         switch algorithmID
             case 1
                 lineStyle = '-.';
+                figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', colors(snrID), 'LineStyle', lineStyle); hold on;
             case 2
                 lineStyle = '-';
-        end
-        if snrID == 1
-            figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'b', 'LineStyle', lineStyle); hold on;
-        else
-            figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', 'r', 'LineStyle', lineStyle); hold on;
+                figure(fig); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', colors(snrID + 2), 'LineStyle', lineStyle); hold on;
         end
     end
 end
