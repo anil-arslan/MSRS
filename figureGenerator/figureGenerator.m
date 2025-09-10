@@ -46,10 +46,10 @@ for signalModel = signalModels
                 lineStyle = '-';
         end
         if modelID == 1
-            figure(fig1); plot(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
+            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
             figure(fig2); loglog(pfaLocal, pfa, 'LineWidth', 2, 'Color', color); hold on;
         else
-            figure(fig1); plot(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
+            figure(fig1); semilogx(pfaLocal, pd, 'LineWidth', 2, 'Color', color, 'LineStyle', lineStyle); hold on;
         end
     end
 end
@@ -60,7 +60,7 @@ ax.YAxis(2).Color = 'm';
 figure(fig1);
 grid on; grid minor;
 ylim([0, 1]);
-xlim([0, 0.3]);
+% xlim([0, 0.3]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
 legendStr = ["fixed thresholding", "randomized thresholding"];
