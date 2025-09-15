@@ -110,29 +110,37 @@ colors = rgb2hex([ ...
     0.4660    0.6740    0.1880 % green
     0.3010    0.7450    0.9330 % cyan
     0.6350    0.0780    0.1840]);
+plot(snrs, nan(length(snrs), 1), '-k'); hold on;
+plot(snrs, nan(length(snrs), 1), '-.k');
+plot(snrs, nan(length(snrs), 1), '--k');
 plot(snrs, mean(pd, 3), 'LineWidth', 2); hold on;
-% plot(snrs, mean(pd, 3) + std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '--');
-% plot(snrs, mean(pd, 3) - std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '--');
-% % ax = gca;
-% ax.Children(end).Color = colors(1, :);
-% ax.Children(end - 1).Color = colors(2, :);
-% ax.Children(end - 2).Color = colors(1, :);
-% ax.Children(end - 3).Color = colors(2, :);
-% ax.Children(end - 4).Color = colors(1, :);
-% ax.Children(end - 5).Color = colors(2, :);
+plot(snrs, mean(pd, 3) + std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '-.');
+plot(snrs, mean(pd, 3) - std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '--');
+ax = gca;
+ax.Children(end - 0).Color = [0 0 0];
+ax.Children(end - 1).Color = [0 0 0];
+ax.Children(end - 2).Color = [0 0 0];
+
+ax.Children(end - 3).Color = colors(1, :);
+ax.Children(end - 4).Color = colors(2, :);
+
+ax.Children(end - 5).Color = colors(1, :);
+ax.Children(end - 6).Color = colors(2, :);
+
+ax.Children(end - 7).Color = colors(1, :);
+ax.Children(end - 8).Color = colors(2, :);
 grid on; grid minor;
 ylim([0, 1]);
 xlabel('Reference Average SNR (dB)');
 ylabel('Global Probability of Detection');
-legend(["SLC", "WSLC"], 'Location', 'best');
+legend(["E[P_D^{global}]", "E[P_D^{global}] + std(P_D^{global})", "E[P_D^{global}] - std(P_D^{global})", "SLC", "WSLC"], ...
+    'Location', 'best');
 
 if kayit
     figureName = 'analysis_centralized_different_snr_iid';
     savefig(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig1, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
-
-
 
 
 
@@ -217,7 +225,7 @@ colors = rgb2hex([ ...
     0.4660    0.6740    0.1880 % green
     0.3010    0.7450    0.9330 % cyan
     0.6350    0.0780    0.1840]);
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 globalPFA = 1e-6;
@@ -260,19 +268,28 @@ for mcID = 1 : nmc
     fprintf('mcID = %d/%d\n', mcID, nmc);
 end
 fig = figure;
+semilogx(pfaLocal, nan(length(pfaLocal), 1), '-k'); hold on;
+semilogx(pfaLocal, nan(length(pfaLocal), 1), '-.k');
+semilogx(pfaLocal, nan(length(pfaLocal), 1), '--k');
 semilogx(pfaLocal, mean(pd, 3), 'LineWidth', 2); hold on;
-semilogx(pfaLocal, mean(pd, 3) + std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '--');
+semilogx(pfaLocal, mean(pd, 3) + std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '-.');
 semilogx(pfaLocal, mean(pd, 3) - std(pd, [], 3), 'LineWidth', 2, 'LineStyle', '--');
 ax = gca;
-ax.Children(end).Color = colors(1, :);
-ax.Children(end - 1).Color = colors(2, :);
-ax.Children(end - 2).Color = colors(3, :);
+ax.Children(end - 0).Color = [0 0 0];
+ax.Children(end - 1).Color = [0 0 0];
+ax.Children(end - 2).Color = [0 0 0];
+
 ax.Children(end - 3).Color = colors(1, :);
 ax.Children(end - 4).Color = colors(2, :);
 ax.Children(end - 5).Color = colors(3, :);
+
 ax.Children(end - 6).Color = colors(1, :);
 ax.Children(end - 7).Color = colors(2, :);
 ax.Children(end - 8).Color = colors(3, :);
+
+ax.Children(end - 9).Color = colors(1, :);
+ax.Children(end - 10).Color = colors(2, :);
+ax.Children(end - 11).Color = colors(3, :);
 % ax = gca;
 % ax.Children(end).Color = colors(1, :);
 % ax.Children(end - 1).Color = colors(2, :);
@@ -291,7 +308,8 @@ ylim([0, 1]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
 % legend(["SLC", "BC", "WSLC", "WBC"], 'Location', 'best');
-legend(["SLC", "WSLC", "BC"], 'Location', 'best');
+legend(["E[P_D^{global}]", "E[P_D^{global}] + std(P_D^{global})", "E[P_D^{global}] - std(P_D^{global})", "SLC", "WSLC", "BC"], ...
+    'Location', 'best');
 
 % figure; semilogx(pfaLocal(2 : end), w{4}(:, 2 : end).', 'LineWidth', 2);
 % grid on; grid minor;
@@ -309,9 +327,12 @@ legend(["SLC", "WSLC", "BC"], 'Location', 'best');
 
 % figure; plot(T{4});
 if kayit
-    figureName = 'analysis_decentralized_different_snr_iid';
+    figureName = 'analysis_decentralized_different_snr_iid_3';
     % savefig(fig, ['\\Users\anilarslan\Desktop\MSRS\figureGenerator\figures\' figureName '.fig']);
     % saveas(fig, ['\\Users\anilarslan\Desktop\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
     savefig(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.fig']);
     saveas(fig, ['C:\GitRepo\MSRS\figureGenerator\figures\' figureName '.eps'], 'epsc');
 end
+
+
+%%%

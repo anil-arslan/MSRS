@@ -8,7 +8,7 @@ addpath(genpath('/Users/anilarslan/Desktop/MSRS/simCDF'));
 
 %% Binary combining discrete threshold effect
 clc; clear; close all;
-kayit = 0;
+kayit = 1;
 set(groot, "defaultFigurePosition", [680 458 560 420]);
 
 algorithms = ["fixedLocalPFA", "timeSharing"];
@@ -64,7 +64,7 @@ ax.YAxis(2).Color = 'm';
 figure(fig1);
 grid on; grid minor;
 ylim([0, 1]);
-xlim([0, 0.3]);
+xlim([0, 2e-4]);
 xlabel('Local Probability of False Alarm');
 ylabel('Global Probability of Detection');
 legendStr = ["fixed thresholding", "randomized thresholding"];
