@@ -67,7 +67,8 @@ classdef detector < handle
 
     properties (SetAccess = private, GetAccess = public)
         % global probability of random threshold
-        globalRandomizationProbability double {mustBeNonnegative, mustBeInRange(globalRandomizationProbability, 0, 1)} = [] % [NpfaGlobal x Nsnr x M x Nlocal] matrix
+        % globalRandomizationProbability double {mustBeNonnegative, mustBeInRange(globalRandomizationProbability, 0, 1)} = [] % [NpfaGlobal x Nsnr x M x Nlocal] matrix
+        globalRandomizationProbability double {mustBeNonnegative} = [] % [NpfaGlobal x Nsnr x M x Nlocal] matrix
         globalPDsimulation double {mustBeNonnegative, mustBeInRange(globalPDsimulation, 0, 1)} = [] % [NpfaGlobal x Nsnr x M x Nlocal] matrix
     end
 
@@ -239,8 +240,8 @@ classdef detector < handle
 
         function Tglobal = get.globalThreshold(obj)
             % [NpfaGlobal x Nsnr x M x Nlocal]
-            simulateThreshold = {"WSLC", "SLC", "CVBC", "BC"};
-            simulateThreshold = {"WSLC", "SLC", "CVBC"};
+            % simulateThreshold = {"WSLC", "SLC", "CVBC", "BC"};
+            % simulateThreshold = {"WSLC", "SLC", "CVBC"};
             simulateThreshold = {};
 
             averageLocalPFA = permute(cell2mat(cellfun(@(c) mean(c, 1), obj.localPFA, 'UniformOutput', false).'), [1 4 2 3]);
@@ -346,19 +347,17 @@ classdef detector < handle
                                                         threshold = find(~isnan(qLocal)) + 0.5;
                                                         obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID) = qLocal(~isnan(qLocal));
                                                 end
+                                                obj.globalNeighbourThresholdCVBC(PFAID, snrID, scanID, localPFAID) = max(threshold - 1, 0);
                                             otherwise
                                                 threshold = m - 0.5;
                                         end
                                     else % discrete but nonuniform float thresholds
-                                        % for subSetID = 1 : numberOfSubsets
-                                        %     indices = logical(allSubsets(subSetID, :));
-                                        %     pmf(subSetID) = prod(pfaLocal(indices))*prod(1 - pfaLocal(~indices));
-                                        %     weightSet(subSetID) = sum(w(indices));
-                                        % end
-                                        % [weightSet, sortIndices] = sort(weightSet);
-                                        % ccdf = 1 - cumsum(pmf(sortIndices));
-
-                                        ccdf = CVBCCCDF(pfaLocal);
+                                        for subSetIIndex = 1 : numberOfSubsets
+                                            indices = logical(allSubsets(subSetIIndex, :));
+                                            weightSet(subSetIIndex) = sum(w(indices));
+                                        end
+                                        [weightSet, sortIndices] = sort(weightSet);
+                                        ccdf = CVBCCCDFvec(pfaLocal);
                                         thresholdIndex = find(ccdf - eps < pfaGlobal, 1, 'first');
                                         if thresholdIndex ~= numberOfSubsets
                                             threshold = mean(weightSet([thresholdIndex, thresholdIndex + 1]));
@@ -377,23 +376,30 @@ classdef detector < handle
                                                 else
                                                     obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID) = 0;
                                                 end
-                                                neighbourThresholdIndex = thresholdIndex - 1;
-                                                if neighbourThresholdIndex ~= 0
-                                                    neighbourThreshold = mean(weightSet([neighbourThresholdIndex, neighbourThresholdIndex + 1]));
-                                                else
-                                                    neighbourThreshold = 0;
-                                                end
                                             case "timeSharing"
-                                                rulesPfaLocal = zeros(1, numberOfSubsets);
-                                                for subSetID = 1 : numberOfSubsets
-                                                    rulesPfaLocal(subSetID) = fzero(@(pfaLoc) CVBCCCDF(pfaLoc) - pfaGlobal, [0 1]);
+                                                if thresholdIndex == numberOfSubsets
+                                                    % pfaLocal(1) > rulesPfaLocal1
+                                                    % rulesPfaLocal1 = fzero(@(pfaLoc) CVBCCCDFidx(pfaLoc, thresholdIndex - 1) - pfaGlobal, [0 1]);
+                                                    ANDrule = CVBCCCDFidx(pfaLocal(1), numberOfSubsets - 1);
+                                                    qLocal = pfaGlobal./ANDrule;
+                                                elseif thresholdIndex == 1
+                                                    % pfaLocal(1) < rulesPfaLocal2
+                                                    % rulesPfaLocal2 = fzero(@(pfaLoc) CVBCCCDFidx(pfaLoc, thresholdIndex) - pfaGlobal, [0 1]);
+                                                    ORrule = CVBCCCDFidx(pfaLocal(1), 2);
+                                                    qLocal = (pfaGlobal - ORrule)./(1 - ORrule);
+                                                else
+                                                    rulesPfaLocal2 = fzero(@(pfaLoc) CVBCCCDFidx(pfaLoc, thresholdIndex) - pfaGlobal, [0 1]);
+                                                    rulesPfaLocal1 = fzero(@(pfaLoc) CVBCCCDFidx(pfaLoc, thresholdIndex - 1) - pfaGlobal, [0 1]);
+                                                    qLocal = (pfaLocal(1) - rulesPfaLocal2)./(rulesPfaLocal1 - rulesPfaLocal2);
                                                 end
-                                                pRules = diag(CVBCCCDF(M, 1 : numberOfSubsets, rulesPfaLocal, 10^(rho/10)));
-                                                qLocal = zeros(M - 1, length(pfaLocal));
-                                                for i = 2 : M
-                                                    qLocal(i - 1, :) = (pfaLocal - rulesPfaLocal(i))./(rulesPfaLocal(i - 1) - rulesPfaLocal(i));
-                                                end
-                                                qLocal(qLocal > 1 | qLocal < 0) = nan;
+                                                qLocal(qLocal < 0) = 0;
+                                                obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID) = qLocal;
+                                        end
+                                        neighbourThresholdIndex = thresholdIndex - 1;
+                                        if neighbourThresholdIndex ~= 0
+                                            neighbourThreshold = mean(weightSet([neighbourThresholdIndex, neighbourThresholdIndex + 1]));
+                                        else
+                                            neighbourThreshold = 0;
                                         end
                                         obj.globalNeighbourThresholdCVBC(PFAID, snrID, scanID, localPFAID) = neighbourThreshold;
                                     end
@@ -407,14 +413,24 @@ classdef detector < handle
                     end
                 end
             end
-            function ccdfOut = CVBCCCDF(localPFA)
+
+            function ccdfOut = CVBCCCDFvec(localPFA)
+                pmf = zeros(numberOfSubsets, 1);
                 for subSetID = 1 : numberOfSubsets
                     indices = logical(allSubsets(subSetID, :));
-                    pmf(subSetID) = prod(localPFA(indices))*prod(1 - localPFA(~indices));
-                    weightSet(subSetID) = sum(w(indices));
+                    pmf(subSetID) = prod(localPFA(indices), 1)*prod(1 - localPFA(~indices), 1);
                 end
-                [weightSet, sortIndices] = sort(weightSet);
                 ccdfOut = 1 - cumsum(pmf(sortIndices));
+            end
+
+            function ccdfOut = CVBCCCDFidx(localPFA, th_idx)
+                pmf = zeros(numberOfSubsets, 1);
+                for subSetID = 1 : numberOfSubsets
+                    indices = logical(allSubsets(subSetID, :));
+                    pmf(subSetID) = (localPFA.^nnz(indices)).*((1 - localPFA).^nnz(~indices));
+                end
+                ccdfOut = 1 - cumsum(pmf(sortIndices));
+                ccdfOut = ccdfOut(th_idx);
             end
         end
         
@@ -436,14 +452,19 @@ classdef detector < handle
             for scanID = 1 : numberOfScans
                 M = obj.numberOfSensors(scanID);
                 m = obj.numberOfRequiredDetections(scanID);
+                if strcmp(obj.globalFusionRule, "CVBC")
+                    allSubsets = dec2bin(0 : 2^M - 1) - '0';
+                    numberOfSubsets = size(allSubsets, 1);
+                    weightSet = zeros(numberOfSubsets, 1);
+                end
                 for PFAID = 1 : length(obj.globalPFA)
-                    rulesPfaLocal = zeros(1, M);
+                    rulesPfaLocalUnweighted = zeros(1, M);
                     for k = 1 : M
-                        rulesPfaLocal(k) = fzero(@(pfaLoc) binaryCCDF(M, k, pfaLoc, 0) - obj.globalPFA(PFAID), [0 1]);
+                        rulesPfaLocalUnweighted(k) = fzero(@(pfaLoc) binaryCCDF(M, k, pfaLoc, 0) - obj.globalPFA(PFAID), [0 1]);
                     end
-                    pRules = diag(binaryCCDF(M, 1 : M, rulesPfaLocal, 0));
+                    pRulesUnweighted = diag(binaryCCDF(M, 1 : M, rulesPfaLocalUnweighted, 0));
                     for localPFAID = 1 : numberOfScansLocalPFA
-                        if any(strcmp(obj.globalFusionRule, "CVBC")) && strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
+                        if any(strcmp(obj.globalFusionRule, "CVBC")) && any(strcmp(obj.binaryDetectionPFAtype, ["fixedGlobal|LocalPFA", "timeSharing"]))
                             gammaNeighbour = obj.globalNeighbourThresholdCVBC(PFAID, 1, scanID, localPFAID);
                         end
                         lambda = Tlocal{scanID}(:, :, :, localPFAID);
@@ -452,15 +473,36 @@ classdef detector < handle
                             gamma = Tglobal(PFAID, snrID, scanID, localPFAID);
                             w = weights{scanID}(:, snrID, 1, localPFAID);
                             F = obj.totalCDF(M, m, lambda, pfaLocal, w);
-                            pRulesOR = binaryCCDF(M, 1, pfaLocal(1), 0);
-                            pRulesAND = binaryCCDF(M, M, pfaLocal(1), 0);
                             if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"]))
+                                if strcmp(obj.binaryDetectionPFAtype, "timeSharing")
+                                    if all(abs(w - 1) < 1e-12, 'all') || any(strcmp(obj.globalFusionRule, "BC")) % discrete uniform integer thresholds
+                                        pRules = pRulesUnweighted;
+                                        pRulesOR = diag(binaryCCDF(M, 1, pfaLocal(1), 0));
+                                        pRulesAND = diag(binaryCCDF(M, M, pfaLocal(1), 0));
+                                    else
+                                        for subSetIIndex = 1 : numberOfSubsets
+                                            indices = logical(allSubsets(subSetIIndex, :));
+                                            weightSet(subSetIIndex) = sum(w(indices));
+                                        end
+                                        [weightSet, sortIndices] = sort(weightSet);
+    
+                                        rulesPfaLocal = zeros(1, numberOfSubsets - 1);
+                                        for subSetIIndex = 1 : numberOfSubsets - 1
+                                            rulesPfaLocal(subSetIIndex) = fzero(@(pfaLoc) CVBCCCDF(subSetIIndex, pfaLoc*ones(M, 1), 0) - obj.globalPFA(PFAID), [0 1]);
+                                        end
+                                        pRules = diag(CVBCCCDF(1 : numberOfSubsets - 1, rulesPfaLocal.*ones(M, 1), 0));
+                                        pRulesOR = CVBCCCDF(2, pfaLocal, 0);
+                                        pRulesAND = CVBCCCDF(numberOfSubsets - 1, pfaLocal, 0);
+                                    end
+                                end
                                 if all(abs(w - 1) < 1e-12, 'all') % discrete uniform integer thresholds
                                     switch obj.binaryDetectionPFAtype
                                         case "fixedGlobal|LocalPFA"
                                             q = obj.globalRandomizationProbability(PFAID, 1, scanID, localPFAID);
                                             pfa(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pfaLocal) + q*F(gamma - 1, pfaLocal);
                                         case "timeSharing"
+                                            pRulesOR = binaryCCDF(M, 1, pfaLocal(1), 0);
+                                            pRulesAND = binaryCCDF(M, M, pfaLocal(1), 0);
                                             q = obj.globalRandomizationProbability(PFAID, 1, scanID, localPFAID);
                                             if gamma > M + 1
                                                 pfa(PFAID, snrID, scanID, localPFAID) = q*0 + q*pRulesAND;
@@ -473,11 +515,22 @@ classdef detector < handle
                                             pfa(PFAID, snrID, scanID, localPFAID) = F(gamma, pfaLocal);
                                     end
                                 else
-                                    if ~strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
-                                        pfa(PFAID, snrID, scanID, localPFAID) = F(gamma, pfaLocal);
-                                    else
-                                        q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
-                                        pfa(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pfaLocal) + q*F(gammaNeighbour, pfaLocal);
+                                    switch obj.binaryDetectionPFAtype
+                                        case "fixedGlobal|LocalPFA"
+                                            q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                            pfa(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pfaLocal) + q*F(gammaNeighbour, pfaLocal);
+                                        case "timeSharing"
+                                            q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                            thresholdIndex = find(weightSet - gamma < 0, 1, 'last');
+                                            if thresholdIndex >= numberOfSubsets
+                                                pfa(PFAID, snrID, scanID, localPFAID) = q*pRulesAND + (1 - q)*0;
+                                            elseif thresholdIndex < 2
+                                                pfa(PFAID, snrID, scanID, localPFAID) = q*1 + (1 - q).*pRulesOR;
+                                            else
+                                                pfa(PFAID, snrID, scanID, localPFAID) = (1 - q)*pRules(thresholdIndex) + q*pRules(thresholdIndex - 1);
+                                            end
+                                        otherwise
+                                            pfa(PFAID, snrID, scanID, localPFAID) = F(gamma, pfaLocal);
                                     end
                                 end
                             else
@@ -487,6 +540,17 @@ classdef detector < handle
                         % evaluating @(gamma - 1) is important for binary fusion with integer threshold
                     end
                 end
+            end
+
+            function ccdfOut = CVBCCCDF(th, local_PFA, rho)
+                local_PD = local_PFA.^(1./(1 + rho));
+                pmf = zeros(numberOfSubsets, size(local_PFA, 2));
+                for subSetID = 1 : numberOfSubsets
+                    indices = logical(allSubsets(subSetID, :));
+                    pmf(subSetID, :) = prod(local_PD(indices, :), 1).*prod(1 - local_PD(~indices, :), 1);
+                end
+                ccdfOut = 1 - cumsum(pmf(sortIndices, :), 1);
+                ccdfOut = ccdfOut(th, :);
             end
         end
 
@@ -510,18 +574,26 @@ classdef detector < handle
                 M = obj.numberOfSensors(scanID);
                 m = obj.numberOfRequiredDetections(scanID);
                 snr = 10.^(.1*obj.SNR_input_dB{scanID});
+                if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"]))
+                    allSubsets = dec2bin(0 : 2^M - 1) - '0';
+                    numberOfSubsets = size(allSubsets, 1);
+                    weightSet = zeros(numberOfSubsets, 1);
+                    mSubSet = sum(allSubsets, 2);
+                end
                 for PFAID = 1 : length(obj.globalPFA)
-                    rulesPfaLocal = zeros(1, M);
-                    for k = 1 : M
-                        rulesPfaLocal(k) = fzero(@(pfaLoc) binaryCCDF(M, k, pfaLoc, 0) - obj.globalPFA(PFAID), [0 1]);
-                    end
-                    for localPFAID = 1 : numberOfScansLocalPFA
-                        if any(strcmp(obj.globalFusionRule, "CVBC")) && strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
-                            gammaNeighbour = obj.globalNeighbourThresholdCVBC(PFAID, 1, scanID, localPFAID);
+                    if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"]))
+                        rulesPfaLocal = zeros(1, M);
+                        for k = 1 : M
+                            rulesPfaLocal(k) = fzero(@(pfaLoc) binaryCCDF(M, k, pfaLoc, 0) - obj.globalPFA(PFAID), [0 1]);
                         end
-                        lambda = Tlocal{scanID}(:, :, :, localPFAID);
-                        pfaLocal = pFAlocal{scanID}(:, :, :, localPFAID);
-                        for snrID = 1 : numberOfScansSNR
+                    end
+                    for snrID = 1 : numberOfScansSNR
+                        for localPFAID = 1 : numberOfScansLocalPFA
+                            if any(strcmp(obj.globalFusionRule, "CVBC")) && any(strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA"))
+                                gammaNeighbour = obj.globalNeighbourThresholdCVBC(PFAID, 1, scanID, localPFAID);
+                            end
+                            lambda = Tlocal{scanID}(:, :, :, localPFAID);
+                            pfaLocal = pFAlocal{scanID}(:, :, :, localPFAID);
                             if size(Tglobal, 2) == 1
                                 gamma = Tglobal(PFAID, :, scanID, localPFAID);
                             else
@@ -530,10 +602,35 @@ classdef detector < handle
                             pdLocal = pDlocal{scanID}(:, snrID, 1, localPFAID);
                             w = weights{scanID}(:, snrID, 1, localPFAID);
                             F = obj.totalCDF(M, m, lambda, pdLocal, w, snr(:, snrID));
-                            pRules = diag(binaryCCDF(M, 1 : M, rulesPfaLocal, snr(1, snrID)));
-                            pRulesOR = binaryCCDF(M, 1, pfaLocal(1), snr(1, snrID));
-                            pRulesAND = binaryCCDF(M, M, pfaLocal(1), snr(1, snrID));
                             if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"]))
+                                if strcmp(obj.binaryDetectionPFAtype, "timeSharing")
+                                    if isscalar(unique(snr(:, snrID)))
+                                        pRules = diag(binaryCCDF(M, 1 : M, rulesPfaLocal, snr(1, snrID)));
+                                        pRulesOR = binaryCCDF(M, 1, pfaLocal(1), snr(1, snrID));
+                                        pRulesAND = binaryCCDF(M, M, pfaLocal(1), snr(1, snrID));
+                                    else
+                                        if all(abs(w - 1) < 1e-12, 'all') || any(strcmp(obj.globalFusionRule, "BC")) % discrete uniform integer thresholds
+                                            pRules = diag(CVBCCCDFunitW(rulesPfaLocal, snr(:, snrID)));
+                                            poissCCDF = CVBCCCDFunitW(pfaLocal, snr(:, snrID));
+                                            pRulesOR = poissCCDF(1);
+                                            pRulesAND = poissCCDF(M);
+                                        else
+                                            for subSetIIndex = 1 : numberOfSubsets
+                                                indices = logical(allSubsets(subSetIIndex, :));
+                                                weightSet(subSetIIndex) = sum(w(indices));
+                                            end
+                                            [weightSet, sortIndices] = sort(weightSet);
+    
+                                            rulesPfaLocal = zeros(1, numberOfSubsets - 1);
+                                            for subSetIIndex = 1 : numberOfSubsets - 1
+                                                rulesPfaLocal(subSetIIndex) = fzero(@(pfaLoc) CVBCCCDF(subSetIIndex, pfaLoc, 0) - obj.globalPFA(PFAID), [0 1]);
+                                            end
+                                            pRules = diag(CVBCCCDF(1 : numberOfSubsets - 1, rulesPfaLocal.*ones(M, 1), snr(:, snrID)));
+                                            pRulesOR = CVBCCCDF(2, pfaLocal, snr(:, snrID));
+                                            pRulesAND = CVBCCCDF(numberOfSubsets - 1, pfaLocal, snr(:, snrID));
+                                        end
+                                    end
+                                end
                                 if all(abs(w - 1) < 1e-12, 'all') % discrete uniform integer thresholds
                                     switch obj.binaryDetectionPFAtype
                                         case "fixedGlobal|LocalPFA"
@@ -542,7 +639,7 @@ classdef detector < handle
                                         case "timeSharing"
                                             q = obj.globalRandomizationProbability(PFAID, 1, scanID, localPFAID);
                                             if gamma > M + 1
-                                                ROC(PFAID, snrID, scanID, localPFAID) = q*0 + q*pRulesAND;
+                                                ROC(PFAID, snrID, scanID, localPFAID) = q*pRulesAND + (1 - q)*0;
                                             elseif gamma < 2
                                                 ROC(PFAID, snrID, scanID, localPFAID) = q*1 + (1 - q).*pRulesOR;
                                             else
@@ -552,11 +649,22 @@ classdef detector < handle
                                             ROC(PFAID, snrID, scanID, localPFAID) = F(gamma, pdLocal);
                                     end
                                 else
-                                    if ~strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
-                                        ROC(PFAID, snrID, scanID, localPFAID) = F(gamma, pdLocal);
-                                    else
-                                        q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
-                                        ROC(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pdLocal) + q*F(gammaNeighbour, pdLocal);
+                                    switch obj.binaryDetectionPFAtype
+                                        case "fixedGlobal|LocalPFA"
+                                            q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                            ROC(PFAID, snrID, scanID, localPFAID) = (1 - q)*F(gamma, pdLocal) + q*F(gammaNeighbour, pdLocal);
+                                        case "timeSharing"
+                                            q = obj.globalRandomizationProbability(PFAID, snrID, scanID, localPFAID);
+                                            thresholdIndex = find(weightSet - gamma < 0, 1, 'last');
+                                            if thresholdIndex >= numberOfSubsets
+                                                ROC(PFAID, snrID, scanID, localPFAID) = q*pRulesAND + (1 - q)*0;
+                                            elseif thresholdIndex < 2
+                                                ROC(PFAID, snrID, scanID, localPFAID) = q*1 + (1 - q).*pRulesOR;
+                                            else
+                                                ROC(PFAID, snrID, scanID, localPFAID) = (1 - q)*pRules(thresholdIndex) + q*pRules(thresholdIndex - 1);
+                                            end
+                                        otherwise
+                                            ROC(PFAID, snrID, scanID, localPFAID) = F(gamma, pdLocal);
                                     end
                                 end
                             else
@@ -566,11 +674,45 @@ classdef detector < handle
                                 fprintf('%d/%d\n', snrID, numberOfScansSNR);
                             end
                             % evaluating @(gamma - 1) is important for binary fusion with integer threshold
-                        end
-                        if ~mod(localPFAID, 10)
-                            fprintf('%d/%d\n', localPFAID, numberOfScansLocalPFA);
+                            if ~mod(localPFAID, 100)
+                                fprintf('%d/%d\n', localPFAID, numberOfScansLocalPFA);
+                            end
                         end
                     end
+                end
+            end
+
+            function ccdfOut = CVBCCCDF(th, local_PFA, rho)
+                if any(rho)
+                    local_PD = local_PFA.^(1./(1 + rho));
+                    pmf = zeros(numberOfSubsets, size(local_PFA, 2));
+                    for subSetID = 1 : numberOfSubsets
+                        indices = logical(allSubsets(subSetID, :));
+                        pmf(subSetID, :) = prod(local_PD(indices, :), 1).*prod(1 - local_PD(~indices, :), 1);
+                    end
+                    ccdfOut = 1 - cumsum(pmf(sortIndices, :), 1);
+                    ccdfOut = ccdfOut(th, :);
+                else
+                    pmf = zeros(numberOfSubsets, 1);
+                    for subSetID = 1 : numberOfSubsets
+                        indices = logical(allSubsets(subSetID, :));
+                        pmf(subSetID) = local_PFA.^nnz(indices).*(1 - local_PFA).^nnz(~indices);
+                    end
+                    ccdfOut = 1 - cumsum(pmf(sortIndices));
+                    ccdfOut = ccdfOut(th);
+                end
+            end
+
+            function pmfSqueezed = CVBCCCDFunitW(local_PFA, rho)
+                local_PD = local_PFA.^(1./(1 + rho));
+                pmf = zeros(numberOfSubsets, size(local_PFA, 2));
+                for subSetID = 1 : numberOfSubsets
+                    indices = logical(allSubsets(subSetID, :));
+                    pmf(subSetID, :) = prod(local_PD(indices, :), 1).*prod(1 - local_PD(~indices, :), 1);
+                end
+                pmfSqueezed = zeros(M, size(local_PFA, 2));
+                for kk = 1 : M
+                    pmfSqueezed(kk, :) = sum(pmf(mSubSet >= kk, :), 1);
                 end
             end
         end
@@ -851,7 +993,7 @@ classdef detector < handle
                     s = obj.signal; % [M x 1] cell of [1 x Nsnr x Nmc] matrices
                     x = cellfun(@(s) s + n(1 : size(s, 1), 1, :), s, 'UniformOutput', false); % [M x Nsnr x Nmc] matrix
                 end
-                if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"])) && strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
+                if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"])) && any(strcmp(obj.binaryDetectionPFAtype, ["fixedGlobal|LocalPFA", "timeSharing"]))
                     uniform01 = rand(1, 1, obj.numberOfTrials, 1, 'single');
                 end
                 for scanID = 1 : numberOfScans
@@ -862,7 +1004,7 @@ classdef detector < handle
                         Tglobal = [];
                     else
                         Tglobal = TglobalAll(:, :, scanID, :);
-                        if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"])) && strcmp(obj.binaryDetectionPFAtype, "fixedGlobal|LocalPFA")
+                        if any(strcmp(obj.globalFusionRule, ["BC", "CVBC"])) && any(strcmp(obj.binaryDetectionPFAtype, ["fixedGlobal|LocalPFA", "timeSharing"]))
                             switch obj.globalFusionRule
                                 case "BC"
                                     Tglobal = Tglobal - double(uniform01 < obj.globalRandomizationProbability(:, :, scanID, :));
@@ -997,13 +1139,11 @@ classdef detector < handle
             arguments
                 obj
                 options.averageSNR_dB double = 10*log10(cell2mat(cellfun(@(c) mean(10.^(.1*c), 1), obj.SNR_input_dB, 'UniformOutput', false).'))
-                options.rangeSNR_dB (1, 1) double = 10
             end
-            snrSamples = 10.^(.1*options.rangeSNR_dB*rand(max(obj.numberOfSensors), 1)); % between 0 dB to "rangeSNR_dB" dB
+            snrSamples = abs(randn(max(obj.numberOfSensors), 1) + 1j*randn(max(obj.numberOfSensors), 1)).^2/2;
             for scanID = 1 : length(obj.numberOfSensors)
                 M = obj.numberOfSensors(scanID);
-                snr = snrSamples(1 : M)./mean(snrSamples(1 : M)); % mean of snr is now 0 dB 
-                obj.SNR_input_dB{scanID} = 10*log10(snr) + options.averageSNR_dB(scanID, :);
+                obj.SNR_input_dB{scanID} = 10*log10(snrSamples(1 : M)) + options.averageSNR_dB(scanID, :);
             end
         end
 
